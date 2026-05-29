@@ -50,7 +50,7 @@ const INITIAL_BOOKINGS = [
     event_type: "college",
     guest_count: 500,
     selected_services: ["speakers", "lights", "artist", "vr", "emcee"],
-    total_price: 6600,
+    total_price: 547800, // 6600 * 83
     created_at: new Date(Date.now() - 86400000 * 2).toISOString()
   },
   {
@@ -61,7 +61,7 @@ const INITIAL_BOOKINGS = [
     event_type: "marriage",
     guest_count: 350,
     selected_services: ["infra", "catering", "photos", "lights", "valet"],
-    total_price: 13850,
+    total_price: 1149550, // 13850 * 83
     created_at: new Date(Date.now() - 86400000 * 5).toISOString()
   }
 ];

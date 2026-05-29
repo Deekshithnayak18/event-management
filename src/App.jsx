@@ -178,6 +178,26 @@ const EVENTS_DATA = {
   }
 };
 
+const EXCHANGE_RATE = 83;
+
+// Format dynamic values in INR (lakhs/crores format)
+const formatINR = (usdVal) => {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0
+  }).format(Math.round(usdVal * EXCHANGE_RATE));
+};
+
+// Formats a number that is ALREADY in INR (e.g. from the database table)
+const formatDirectINR = (inrVal) => {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0
+  }).format(inrVal);
+};
+
 function App() {
   // Theme States: 'purple', 'blue', 'rose', 'green'
   const [themeAccent, setThemeAccent] = useState('purple');
@@ -398,7 +418,7 @@ function App() {
       eventType: selectedEventType,
       guestCount: guestCount,
       selectedServices: selectedServices,
-      totalPrice: totalCostDetails.total
+      totalPrice: totalCostDetails.total * EXCHANGE_RATE
     };
 
     const res = await supabaseClient.insertBooking(payload);
@@ -444,7 +464,7 @@ function App() {
       eventType: editEventType,
       guestCount: editGuestCount,
       selectedServices: editSelectedServices,
-      totalPrice: computedEditTotal
+      totalPrice: computedEditTotal * EXCHANGE_RATE
     };
 
     const res = await supabaseClient.updateBooking(editId, payload);
@@ -825,7 +845,7 @@ function App() {
                     <span style={{color: 'var(--accent-text)'}}>★</span>
                     {EVENTS_DATA[selectedEventType]?.title} (Base)
                   </div>
-                  <div className="selected-cost">${totalCostDetails.adjustedBase.toLocaleString()}</div>
+                  <div className="selected-cost">{formatINR(totalCostDetails.adjustedBase)}</div>
                 </div>
 
                 {totalCostDetails.servicesList.length === 0 ? (
@@ -840,7 +860,7 @@ function App() {
                         {s.title}
                       </div>
                       <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
-                        <span className="selected-cost">${s.cost.toLocaleString()}</span>
+                        <span className="selected-cost">{formatINR(s.cost)}</span>
                         <button 
                           className="selected-remove" 
                           onClick={() => handleRemoveService(s.id)}
@@ -858,7 +878,7 @@ function App() {
               <div>
                 <div className="summary-cost-block">
                   <div className="summary-cost-label">Calculated Estimate</div>
-                  <div className="summary-cost-total">${totalCostDetails.total.toLocaleString()}</div>
+                  <div className="summary-cost-total">{formatINR(totalCostDetails.total)}</div>
                   <div className="summary-cost-sub">
                     Includes {guestCount} guests & {selectedServices.length} database specifications
                   </div>
@@ -981,7 +1001,7 @@ function App() {
                           </div>
                         </td>
                         <td className="db-td" style={{fontWeight: '800', color: 'var(--accent-text)', fontSize: '0.95rem'}}>
-                          ${Number(b.total_price).toLocaleString()}
+                          {formatDirectINR(b.total_price)}
                         </td>
                         <td className="db-td">
                           <div className="db-actions" style={{justifyContent: 'center'}}>
@@ -1104,7 +1124,7 @@ function App() {
                     <div className="service-footer">
                       <div className="service-cost-tag">
                         <span className="service-cost-val">
-                          ${service.basePrice.toLocaleString()}
+                          {formatINR(service.basePrice)}
                         </span>
                         <span className="service-cost-lbl">
                           {showPerGuestLabel ? 'per Guest fee' : 'Flat setup fee'}
@@ -1654,7 +1674,7 @@ function App() {
                     </div>
                     <div className="success-details-row">
                       <span className="success-details-lbl">Committed Price:</span>
-                      <span className="success-details-val" style={{color: 'var(--accent-primary)', fontSize: '1rem'}}>${Number(recentBookingResult.total_price).toLocaleString()}</span>
+                      <span className="success-details-val" style={{color: 'var(--accent-primary)', fontSize: '1rem'}}>{formatDirectINR(recentBookingResult.total_price)}</span>
                     </div>
                   </div>
                 )}
@@ -1725,7 +1745,7 @@ function App() {
                     </div>
                     <div style={{display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.4rem', marginTop: '0.4rem'}}>
                       <span style={{color: '#ffffff', fontWeight: 700}}>Calculated Pricing:</span>
-                      <span style={{color: 'var(--accent-text)', fontWeight: 800}}>${totalCostDetails.total.toLocaleString()}</span>
+                      <span style={{color: 'var(--accent-text)', fontWeight: 800}}>{formatINR(totalCostDetails.total)}</span>
                     </div>
                   </div>
 
@@ -1868,7 +1888,7 @@ function App() {
               <div style={{background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem'}}>
                 <div>
                   <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block'}}>NEW ESTIMATED PRICE</span>
-                  <span style={{fontSize: '1.35rem', fontWeight: '800', color: '#ffffff'}}>${computedEditTotal.toLocaleString()}</span>
+                  <span style={{fontSize: '1.35rem', fontWeight: '800', color: '#ffffff'}}>{formatINR(computedEditTotal)}</span>
                 </div>
                 <span className="footer-college-tag" style={{borderColor: 'rgba(59, 130, 246, 0.3)', color: '#3b82f6', background: 'rgba(59, 130, 246, 0.05)'}}>
                   Recalculated

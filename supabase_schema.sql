@@ -32,7 +32,8 @@ CREATE TABLE bookings (
     guest_count INTEGER NOT NULL CHECK (guest_count > 0),
     selected_services TEXT[] DEFAULT '{}'::TEXT[] NOT NULL,
     total_price NUMERIC(12, 2) NOT NULL CHECK (total_price >= 0),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    CONSTRAINT check_future_booking CHECK (event_date >= CURRENT_DATE)
 );
 
 -- 4. CREATE INQUIRIES DATABASE TABLE (Log of custom spec requirements)
@@ -49,24 +50,24 @@ CREATE TABLE inquiries (
 -- =========================================================================
 
 INSERT INTO services (id, title, category, base_price, pricing_model, description, icon_key, is_standard) VALUES
-('infra', 'Venue Setup & Pagodas', 'Infrastructure', 1200.00, 'flat', 'Heavy-duty steel trussing, weather-proof German pagodas, dynamic layout planning, and secure perimeter fencing.', 'Infrastructure', TRUE),
-('speakers', 'High-Fidelity Speakers', 'AV & Sound', 850.00, 'flat', 'Pro audio line arrays, high-wattage subwoofers, visual stage monitors, and digital sound boards tuning sound perfectly.', 'Audio', TRUE),
-('projectors', 'HD Projectors & Mapping', 'AV & Sound', 500.00, 'flat', 'High-lumen laser projectors, widescreen custom projection mapping, and ultra-bright resolution outputs.', 'Visual', TRUE),
-('catering', 'Catering & Fine Dining', 'Food & Talent', 12.00, 'per-guest', 'Curated global cuisines, high-end live counters, professional uniform buffet service, and certified hygiene systems.', 'Dining', FALSE),
-('photos', 'Photography & 4K Video', 'AV & Sound', 950.00, 'flat', 'Professional cinematic camera operators, high-end candid photography, instant digital photo delivery portal.', 'Media', FALSE),
-('stage', 'Bespoke Stage Design', 'Infrastructure', 1500.00, 'flat', 'Custom elevated multi-tier stage structures, modern thematic backdrops, and acoustic backdrop draping.', 'Stage', FALSE),
-('security', 'Security & Crowd Control', 'Logistics & Tech', 600.00, 'flat', 'Licensed professional bouncers, crowd control baricading, emergency exit routing, and metal detector entry arches.', 'Security', FALSE),
-('drones', 'Drone Coverage & Stream', 'AV & Sound', 750.00, 'flat', '4K dual-operator thermal camera drones, real-time wireless feed encoding, and multi-platform live streaming setups.', 'Drone', FALSE),
-('lights', 'Laser Shows & Lighting', 'AV & Sound', 1100.00, 'flat', 'Intelligent DMX moving heads, architectural uplighting, colorful lasers, ambient smoke, and custom dynamic light cues.', 'Lighting', FALSE),
-('artist', 'Artist & Celebrity Booking', 'Food & Talent', 3000.00, 'flat', 'Direct coordination with top artists, management of booking riders, premium green rooms, and technical hospitality.', 'Talent', FALSE),
-('rsvp', 'Invites & RSVP Management', 'Logistics & Tech', 350.00, 'flat', 'Custom animated WhatsApp digital invites, active RSVP call desk, real-time digital attendee dashboard.', 'Invites', FALSE),
-('valet', 'Valet Parking & Logistics', 'Logistics & Tech', 450.00, 'flat', 'Trained valet drivers, automated key tag systems, VIP shuttle carts, and active traffic coordination.', 'Logistics', FALSE),
-('vr', 'VR & Interactive Booths', 'Logistics & Tech', 800.00, 'flat', 'Next-gen virtual reality experience pods, 360-degree rotating camera selfie booths, and instant social share links.', 'VR', FALSE),
-('cleanup', 'Eco Waste & Clean Up', 'Infrastructure', 2.00, 'per-guest', 'Zero-plastic waste management bins, active janitorial staffing, post-event eco-friendly disposal and recycling.', 'Cleanup', FALSE),
-('ticketing', 'RFID Registration', 'Logistics & Tech', 4.00, 'per-guest', 'Tap-to-enter RFID wristbands, on-site barcode thermal ticket printers, and high-speed turnstile entrance pods.', 'Ticketing', FALSE),
-('emcee', 'Multi-lingual Emcee Anchor', 'Food & Talent', 500.00, 'flat', 'Charismatic hosts fluent in multiple languages, dynamic crowd engagement games, and script development.', 'Talent', FALSE),
-('soundproof', 'Acoustic Soundproofing', 'Infrastructure', 900.00, 'flat', 'Heavy sound-dampening acoustic wall blankets, stage echo isolators, and environmental decibel regulation systems.', 'Acoustics', FALSE),
-('pyrotechnics', 'SFX & Cold Fire Sparks', 'AV & Sound', 650.00, 'flat', 'Safe cold-pyro spark fountain machines, CO2 heavy-fog dancefloor clouds, and synchronised stadium confetti blasts.', 'Pyrotechnics', FALSE);
+('infra', 'Venue Tents & Setup', 'Infrastructure', 1200.00, 'flat', 'Strong weather-proof tents, tables, chairs, and fencing for your event ground.', 'Infrastructure', TRUE),
+('speakers', 'Stage Speakers & Sound', 'AV & Sound', 850.00, 'flat', 'High-quality speakers, amplifiers, and sound controllers to play clear audio.', 'Audio', TRUE),
+('projectors', 'HD Projectors & Visuals', 'AV & Sound', 500.00, 'flat', 'Bright visual projectors and wide screens to show videos or presentations.', 'Visual', TRUE),
+('catering', 'Food & Catering', 'Food & Talent', 12.00, 'per-guest', 'Tasty food and drinks, live cooking counters, and uniform buffet servers.', 'Dining', FALSE),
+('photos', 'Photos & Video Shoots', 'AV & Sound', 950.00, 'flat', 'Professional camera team, candid photos, and high-quality event videos.', 'Media', FALSE),
+('stage', 'Custom Stage Design', 'Infrastructure', 1500.00, 'flat', 'Beautifully decorated wooden stages, background themes, and red carpets.', 'Stage', FALSE),
+('security', 'Security & Guard Crews', 'Logistics & Tech', 600.00, 'flat', 'Trained guards, entrance metal detectors, and safe emergency exit planning.', 'Security', FALSE),
+('drones', 'Drone Video & Live Stream', 'AV & Sound', 750.00, 'flat', 'Flying cameras for sky views and live video broadcasting on YouTube.', 'Drone', FALSE),
+('lights', 'Stage Lights & Lasers', 'AV & Sound', 1100.00, 'flat', 'Colorful moving lights, stage spotlights, and smoke effects.', 'Lighting', FALSE),
+('artist', 'Celebrity & Band Bookings', 'Food & Talent', 3000.00, 'flat', 'Hiring famous singers, music bands, or DJs for guest entertainment.', 'Talent', FALSE),
+('rsvp', 'Invitation & Guest Invites', 'Logistics & Tech', 350.00, 'flat', 'Beautiful digital cards sent on WhatsApp and phone support for guest confirmations.', 'Invites', FALSE),
+('valet', 'Valet Parking & Shuttles', 'Logistics & Tech', 450.00, 'flat', 'Trained drivers to park cars and golf carts for elderly guests.', 'Logistics', FALSE),
+('vr', 'Virtual Reality Game Zones', 'Logistics & Tech', 800.00, 'flat', 'Fun VR headset game areas and a rotating selfie camera booth.', 'VR', FALSE),
+('cleanup', 'Eco-Friendly Cleaning', 'Infrastructure', 2.00, 'per-guest', 'Garbage recycling bins and cleanup staff to keep the ground clean.', 'Cleanup', FALSE),
+('ticketing', 'Digital Entry Tickets', 'Logistics & Tech', 4.00, 'per-guest', 'Wristband entries, high-speed gate scanners, and physical receipt printers.', 'Ticketing', FALSE),
+('emcee', 'Event Host & Speaker', 'Food & Talent', 500.00, 'flat', 'Friendly anchors and hosts to introduce events and play games with guests.', 'Talent', FALSE),
+('soundproof', 'Sound Isolation Setup', 'Infrastructure', 900.00, 'flat', 'Sound-dampening panels and blankets to block external noises.', 'Acoustics', FALSE),
+('pyrotechnics', 'Special Effects & Sparklers', 'AV & Sound', 650.00, 'flat', 'Safe cold sparks, stage bubble machines, and paper confetti blasts.', 'Pyrotechnics', FALSE);
 
 -- =========================================================================
 -- DATABASE ACCESS CONTROLS (Row Level Security - RLS Policies)

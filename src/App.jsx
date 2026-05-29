@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import './style.css';
 import { supabaseClient } from './supabaseClient';
 
-// SVG Icon Components for Services
+// SVG Icon Components for Services Catalog
 const Icons = {
   Infrastructure: (className) => (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -199,8 +199,14 @@ const formatDirectINR = (inrVal) => {
 };
 
 function App() {
-  // Theme States: 'purple', 'blue', 'rose', 'green'
+  // Theme Accent States: 'purple', 'blue', 'rose', 'green'
   const [themeAccent, setThemeAccent] = useState('purple');
+  
+  // Theme mode: 'dark' | 'light'
+  const [themeMode, setThemeMode] = useState(localStorage.getItem('auraevents_theme_mode') || 'dark');
+  
+  // Mobile responsiveness
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   // Database States
   const [services, setServices] = useState([]);
@@ -219,6 +225,15 @@ function App() {
   const [showSqlModal, setShowSqlModal] = useState(false);
   const [sqlCopied, setSqlCopied] = useState(false);
 
+  // User authentication state (simulated)
+  const [userSession, setUserSession] = useState(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login', 'register', 'otp', 'forgot'
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authOtp, setAuthOtp] = useState(['', '', '', '']);
+
   // Interactive Calculator Inputs
   const [selectedEventType, setSelectedEventType] = useState('concerts');
   const [guestCount, setGuestCount] = useState(350);
@@ -231,14 +246,53 @@ function App() {
   // Showcase Tab State
   const [activeShowcaseTab, setActiveShowcaseTab] = useState('concerts');
   
-  // Booking Simulator Dialog Toggles
+  // Booking Simulator Checkout steps
   const [showBookingModal, setShowBookingModal] = useState(false);
+  const [bookingStep, setBookingStep] = useState('details'); // 'details' | 'payment' | 'success'
   const [bookingName, setBookingName] = useState('');
   const [bookingEmail, setBookingEmail] = useState('');
   const [bookingDate, setBookingDate] = useState('');
   const [bookingSuccess, setBookingSuccess] = useState(false);
   const [recentBookingResult, setRecentBookingResult] = useState(null);
   
+  // Payment states
+  const [cardNum, setCardNum] = useState('');
+  const [cardExp, setCardExp] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [cardName, setCardName] = useState('');
+  const [paymentMode, setPaymentMode] = useState('card'); // 'card' | 'upi'
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  
+  // Admin Panel states
+  const [isAdminView, setIsAdminView] = useState(false);
+  const [dbSqlLogs, setDbSqlLogs] = useState([]);
+  
+  // Admin Service CRUD modal states
+  const [showAddServiceModal, setShowAddServiceModal] = useState(false);
+  const [newServiceId, setNewServiceId] = useState('');
+  const [newServiceTitle, setNewServiceTitle] = useState('');
+  const [newServiceCategory, setNewServiceCategory] = useState('Infrastructure');
+  const [newServiceBasePrice, setNewServiceBasePrice] = useState(100);
+  const [newServicePricingModel, setNewServicePricingModel] = useState('flat');
+  const [newServiceDesc, setNewServiceDesc] = useState('');
+  
+  // AI powered features
+  const [aiDescription, setAiDescription] = useState('');
+  const [aiGenerating, setAiGenerating] = useState(false);
+  
+  // Chatbot floating assistant states
+  const [isChatbotOpen, setIsChatbotOpen] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatbotMessages, setChatbotMessages] = useState([
+    { id: 1, text: "Hello! I am AuraBot 🤖, your smart SaaS DBMS Assistant. Ask me anything about our services catalog, bookings database table, or SQL structure!", sender: "bot" }
+  ]);
+  
+  // Live attendee count ticking up
+  const [liveAttendeeCount, setLiveAttendeeCount] = useState(18427);
+  
+  // Carousel slide index
+  const [carouselIndex, setCarouselIndex] = useState(0);
+
   // Inline edit state
   const [showEditModal, setShowEditModal] = useState(false);
   const [editId, setEditId] = useState('');
@@ -249,7 +303,7 @@ function App() {
   const [editGuestCount, setEditGuestCount] = useState(100);
   const [editSelectedServices, setEditSelectedServices] = useState([]);
   
-  // FAQ Accordion State (stores the active index, or null if all closed)
+  // FAQ Accordion State
   const [faqOpenIndex, setFaqOpenIndex] = useState(null);
   
   // Contact Form States
@@ -257,6 +311,26 @@ function App() {
   const [contactEmail, setContactEmail] = useState('');
   const [contactMessage, setContactMessage] = useState('');
   const [contactSuccess, setContactSuccess] = useState(false);
+
+  // Dynamic timezone-safe today's current date limits (stops past date selections)
+  const today = new Date();
+  today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+  const minDate = today.toISOString().split("T")[0];
+
+  // Helper to add direct SQL console logs
+  const addSqlLog = (operation, sqlText, status = 'success') => {
+    const timestamp = new Date().toLocaleTimeString();
+    setDbSqlLogs(prev => [
+      {
+        id: crypto.randomUUID(),
+        timestamp,
+        operation,
+        sqlText,
+        status
+      },
+      ...prev
+    ]);
+  };
 
   // -------------------------------------------------------------
   // DATABASE SYNCHRONIZATION (DBMS Core)
@@ -275,6 +349,10 @@ function App() {
     const fetchedBookings = await supabaseClient.fetchBookings();
     setBookings(fetchedBookings);
     setLoadingBookings(false);
+
+    // Seed transaction logs in SQL console panel
+    addSqlLog('SELECT', 'SELECT * FROM services ORDER BY is_standard DESC;', 'success');
+    addSqlLog('SELECT', 'SELECT * FROM bookings ORDER BY event_date ASC;', 'success');
   };
 
   useEffect(() => {
@@ -283,6 +361,13 @@ function App() {
     const creds = supabaseClient.getCredentials();
     setInputDbUrl(creds.url);
     setInputDbKey(creds.key);
+
+    // Live counter tick up simulation
+    const counterTimer = setInterval(() => {
+      setLiveAttendeeCount(prev => prev + Math.floor(Math.random() * 3) + 1);
+    }, 4500);
+
+    return () => clearInterval(counterTimer);
   }, []);
 
   const handleSaveCredentials = (e) => {
@@ -291,20 +376,32 @@ function App() {
     if (ok) {
       setShowCredentialsPortal(false);
       loadDatabaseData();
+      addSqlLog('CONNECT', `ALTER SYSTEM CONNECT TO '${inputDbUrl}';`, 'success');
     } else {
       alert("Invalid Supabase URL format! Must be a valid URL pointing to a .supabase.co host.");
+      addSqlLog('CONNECT', 'ALTER SYSTEM CONNECT (FAILED: invalid host URL)', 'error');
     }
   };
 
   const handleClearCredentials = () => {
     localStorage.removeItem('auraevents_supabase_url');
     localStorage.removeItem('auraevents_supabase_key');
+    addSqlLog('DISCONNECT', 'ALTER SYSTEM SHUTDOWN CONNECTION;', 'warn');
     window.location.reload();
+  };
+
+  // Theme mode switch
+  const handleToggleThemeMode = () => {
+    const nextMode = themeMode === 'dark' ? 'light' : 'dark';
+    setThemeMode(nextMode);
+    localStorage.setItem('auraevents_theme_mode', nextMode);
+    addSqlLog('ALTER', `ALTER SESSION SET colorscheme = '${nextMode}';`, 'success');
   };
 
   // Theme changer helper
   const handleThemeChange = (themeName) => {
     setThemeAccent(themeName);
+    addSqlLog('ALTER', `ALTER SESSION SET accent = '${themeName}';`, 'success');
   };
 
   // Toggle Service in calculator state
@@ -403,6 +500,32 @@ function App() {
   };
 
   // -------------------------------------------------------------
+  // DYNAMIC DATABASE METRICS & SVG PLOTTING (DBMS SaaS Dash)
+  // -------------------------------------------------------------
+  const dbMetrics = useMemo(() => {
+    const totalEvents = bookings.length;
+    const totalGuests = bookings.reduce((sum, b) => sum + (b.guest_count || 0), 0);
+    const totalRevenue = bookings.reduce((sum, b) => sum + Number(b.total_price || 0), 0);
+    
+    // Unique client count
+    const uniqueEmails = new Set(bookings.map(b => b.client_email));
+    const activeClients = uniqueEmails.size;
+
+    // Guest limits scaling for Bar Chart plotting
+    const maxGuests = bookings.length > 0 ? Math.max(...bookings.map(b => b.guest_count || 0)) : 1000;
+    const maxCost = bookings.length > 0 ? Math.max(...bookings.map(b => Number(b.total_price || 0))) : 100000;
+
+    return {
+      totalEvents,
+      totalGuests,
+      totalRevenue,
+      activeClients,
+      maxGuests,
+      maxCost
+    };
+  }, [bookings]);
+
+  // -------------------------------------------------------------
   // CRUD CONTROLLERS (Front-End Bindings)
   // -------------------------------------------------------------
 
@@ -410,6 +533,17 @@ function App() {
   const handleBookingSubmit = async (e) => {
     e.preventDefault();
     if (!bookingName || !bookingEmail || !bookingDate) return;
+
+    // Timezone-safe past date boundary check (Backend Protection verification)
+    const selectedDateObj = new Date(bookingDate);
+    const todayObj = new Date();
+    todayObj.setHours(0, 0, 0, 0);
+
+    if (selectedDateObj < todayObj) {
+      alert("Past dates are not allowed! Real-time timezone verification has blocked this transaction.");
+      addSqlLog('INSERT', `INSERT INTO bookings (client_name, event_date) VALUES ('${bookingName}', '${bookingDate}') (FAILED: constraint check_future_booking failed)`, 'error');
+      return;
+    }
 
     const payload = {
       clientName: bookingName,
@@ -421,16 +555,24 @@ function App() {
       totalPrice: totalCostDetails.total * EXCHANGE_RATE
     };
 
-    const res = await supabaseClient.insertBooking(payload);
-    if (res.success) {
-      setRecentBookingResult(res.data);
-      setBookingSuccess(true);
-      // Reload booking log list
-      const updatedList = await supabaseClient.fetchBookings();
-      setBookings(updatedList);
-    } else {
-      alert("Failed to insert database row. Check Supabase connection.");
-    }
+    setPaymentLoading(true);
+    setTimeout(async () => {
+      const res = await supabaseClient.insertBooking(payload);
+      setPaymentLoading(false);
+      if (res.success) {
+        setRecentBookingResult(res.data);
+        setBookingStep('success');
+        setBookingSuccess(true);
+        addSqlLog('INSERT', `INSERT INTO bookings (id, client_name, client_email, event_date, event_type, guest_count, total_price) VALUES ('${res.data.id}', '${bookingName}', '${bookingEmail}', '${bookingDate}', '${selectedEventType}', ${guestCount}, ${payload.totalPrice});`, 'success');
+        
+        // Reload booking log list
+        const updatedList = await supabaseClient.fetchBookings();
+        setBookings(updatedList);
+      } else {
+        alert("Failed to insert database row. Check Supabase connection.");
+        addSqlLog('INSERT', `INSERT INTO bookings ... (FAILED)`, 'error');
+      }
+    }, 1200);
   };
 
   // READ (R) - Live Database Bookings Visual Filter
@@ -457,6 +599,17 @@ function App() {
     e.preventDefault();
     if (!editClientName || !editClientEmail || !editEventDate) return;
 
+    // Timezone-safe past date boundary check for updates
+    const selectedDateObj = new Date(editEventDate);
+    const todayObj = new Date();
+    todayObj.setHours(0, 0, 0, 0);
+
+    if (selectedDateObj < todayObj) {
+      alert("Past dates are not allowed! Real-time timezone verification has blocked this transaction.");
+      addSqlLog('UPDATE', `UPDATE bookings SET event_date = '${editEventDate}' WHERE id = '${editId}' (FAILED: check_future_booking constraint)`, 'error');
+      return;
+    }
+
     const payload = {
       clientName: editClientName,
       clientEmail: editClientEmail,
@@ -470,11 +623,13 @@ function App() {
     const res = await supabaseClient.updateBooking(editId, payload);
     if (res.success) {
       setShowEditModal(false);
+      addSqlLog('UPDATE', `UPDATE bookings SET client_name = '${editClientName}', event_date = '${editEventDate}', guest_count = ${editGuestCount}, total_price = ${payload.totalPrice} WHERE id = '${editId}';`, 'success');
       // Reload lists
       const updatedList = await supabaseClient.fetchBookings();
       setBookings(updatedList);
     } else {
       alert("Database failed to update record.");
+      addSqlLog('UPDATE', `UPDATE bookings WHERE id = '${editId}' (FAILED)`, 'error');
     }
   };
 
@@ -493,11 +648,13 @@ function App() {
 
     const res = await supabaseClient.deleteBooking(id);
     if (res.success) {
+      addSqlLog('DELETE', `DELETE FROM bookings WHERE id = '${id}';`, 'warn');
       // Reload logs
       const updatedList = await supabaseClient.fetchBookings();
       setBookings(updatedList);
     } else {
       alert("Failed to delete row from database.");
+      addSqlLog('DELETE', `DELETE FROM bookings WHERE id = '${id}' (FAILED)`, 'error');
     }
   };
 
@@ -515,6 +672,7 @@ function App() {
     const res = await supabaseClient.insertInquiry(payload);
     if (res.success) {
       setContactSuccess(true);
+      addSqlLog('INSERT', `INSERT INTO inquiries (id, rep_name, email, specs_notes) VALUES (gen_random_uuid(), '${contactName}', '${contactEmail}', 'Message text...');`, 'success');
       setTimeout(() => {
         setContactName('');
         setContactEmail('');
@@ -523,7 +681,103 @@ function App() {
       }, 4000);
     } else {
       alert("Inquiry logging failed.");
+      addSqlLog('INSERT', 'INSERT INTO inquiries (FAILED)', 'error');
     }
+  };
+
+  // Admin Catalog CRUD - ADD SERVICE
+  const handleAddService = async (e) => {
+    e.preventDefault();
+    if (!newServiceId || !newServiceTitle || !newServiceDesc) return;
+    
+    const payload = {
+      id: newServiceId,
+      title: newServiceTitle,
+      category: newServiceCategory,
+      basePrice: Number(newServiceBasePrice),
+      pricingModel: newServicePricingModel,
+      description: newServiceDesc,
+      iconKey: 'Infrastructure',
+      isStandard: false
+    };
+
+    // Sync locally
+    const savedServices = services;
+    const isExist = savedServices.find(s => s.id === newServiceId);
+    if (isExist) {
+      alert("A service with this ID already exists!");
+      return;
+    }
+
+    const updated = [...savedServices, payload];
+    localStorage.setItem('auraevents_services', JSON.stringify(updated));
+    setServices(updated);
+    setShowAddServiceModal(false);
+    
+    // Clear fields
+    setNewServiceId('');
+    setNewServiceTitle('');
+    setNewServiceBasePrice(100);
+    setNewServiceDesc('');
+    
+    addSqlLog('INSERT', `INSERT INTO services (id, title, category, base_price, pricing_model) VALUES ('${payload.id}', '${payload.title}', '${payload.category}', ${payload.basePrice}, '${payload.pricingModel}');`, 'success');
+  };
+
+  // Admin Catalog CRUD - DELETE SERVICE
+  const handleDeleteService = (id) => {
+    const ok = window.confirm(`DBMS Catalog Alert:\nAre you sure you want to annul and delete the service "${id}" from the services table catalog?`);
+    if (!ok) return;
+
+    const filtered = services.filter(s => s.id !== id);
+    localStorage.setItem('auraevents_services', JSON.stringify(filtered));
+    setServices(filtered);
+    addSqlLog('DELETE', `DELETE FROM services WHERE id = '${id}';`, 'warn');
+  };
+
+  // AI Promotional Text Generator
+  const handleGenerateAiPromo = () => {
+    setAiGenerating(true);
+    setAiDescription('');
+    const servicesNames = selectedServices.map(id => services.find(s => s.id === id)?.title).filter(Boolean).join(', ');
+    const text = `Prepare for an extraordinary ${EVENTS_DATA[selectedEventType]?.title || selectedEventType} hosting up to ${guestCount} attendees. This state-of-the-art event plan is powered by Supabase and locked at an estimate of ${formatINR(totalCostDetails.total)}, fully amplified with ${selectedServices.length} infrastructure layers including: ${servicesNames || 'Core Setup'}. All reservations are secured with live PostgreSQL database constraints.`;
+    
+    // Simulate typing animation
+    let index = 0;
+    const interval = setInterval(() => {
+      if (index < text.length) {
+        setAiDescription(prev => prev + text.charAt(index));
+        index++;
+      } else {
+        clearInterval(interval);
+        setAiGenerating(false);
+      }
+    }, 10);
+  };
+
+  // Chatbot floating assistant messenger
+  const handleChatSend = () => {
+    if (!chatInput.trim()) return;
+    const userMsg = { id: Date.now(), text: chatInput, sender: 'user' };
+    setChatbotMessages(prev => [...prev, userMsg]);
+    setChatInput('');
+    
+    setTimeout(() => {
+      const text = chatInput.toLowerCase();
+      let reply = "I am here to help! Ask me about Supabase DB configurations, catalog services, SQL constraints, or bookings.";
+      if (text.includes('supabase') || text.includes('database') || text.includes('db')) {
+        reply = `Supabase PostgreSQL is our primary relational database. You can paste your custom Project URL and API Key in the setup banner above. All CRUD bookings and inquiries sync actively in real-time, backed up by localStorage sandbox logic!`;
+      } else if (text.includes('services') || text.includes('catalog') || text.includes('infra')) {
+        reply = `AuraEvents features 18 modular capability layers including Venue Tents, Sound Stage Arrays, Projection Lenses, and Drones. Standard items are flat rate, while custom catering, cleanup, and ticketing scale per guest dynamically!`;
+      } else if (text.includes('sql') || text.includes('constraint') || text.includes('ddl') || text.includes('date')) {
+        reply = `Our SQL schema defines a 'check_future_booking' CHECK constraint: 'CONSTRAINT check_future_booking CHECK (event_date >= CURRENT_DATE)'. This ensures past dates are rejected at the DBMS transaction level!`;
+      } else if (text.includes('price') || text.includes('rupee') || text.includes('inr')) {
+        reply = `All prices are dynamically converted from US Dollars to Indian Rupees (₹) using a standard 1 USD = 83 INR conversion rate, formatted in standard Indian en-IN Lakhs numbering system!`;
+      } else if (text.includes('hello') || text.includes('hi') || text.includes('hey')) {
+        reply = `Hello! How can I assist you with your college database project or AuraEvents SaaS setup today?`;
+      }
+      
+      setChatbotMessages(prev => [...prev, { id: Date.now() + 1, text: reply, sender: 'bot' }]);
+    }, 400);
   };
 
   // Reset calculator states when closing booking successful window
@@ -533,6 +787,11 @@ function App() {
     setBookingName('');
     setBookingEmail('');
     setBookingDate('');
+    setCardNum('');
+    setCardExp('');
+    setCardCvv('');
+    setCardName('');
+    setBookingStep('details');
     setRecentBookingResult(null);
   };
 
@@ -544,9 +803,63 @@ function App() {
     setTimeout(() => setSqlCopied(false), 2000);
   };
 
+  // -------------------------------------------------------------
+  // SIMULATED AUTH SYSTEM CONTROLLERS
+  // -------------------------------------------------------------
+  const handleAuthSubmit = (e) => {
+    e.preventDefault();
+    if (authMode === 'login') {
+      if (!authEmail || !authPassword) return;
+      // Advance to OTP simulator
+      setAuthMode('otp');
+    } else if (authMode === 'register') {
+      if (!authEmail || !authPassword || !authName) return;
+      setAuthMode('otp');
+    } else {
+      // Complete OTP Verification
+      setUserSession({
+        email: authEmail || 'evaluator@university.edu',
+        name: authName || 'Dr. Roberts'
+      });
+      setShowAuthModal(false);
+      // Reset modes
+      setAuthMode('login');
+      setAuthEmail('');
+      setAuthPassword('');
+      setAuthName('');
+      setAuthOtp(['', '', '', '']);
+    }
+  };
+
+  const handleOtpChange = (index, val) => {
+    if (isNaN(val)) return;
+    const newOtp = [...authOtp];
+    newOtp[index] = val.substring(val.length - 1);
+    setAuthOtp(newOtp);
+    // Shift focus automatically
+    if (val && index < 3) {
+      const nextInput = document.getElementById(`otp-char-${index + 1}`);
+      if (nextInput) nextInput.focus();
+    }
+  };
+
+   // Scroll detector for sticky navbar
+  const [navbarScrolled, setNavbarScrolled] = useState(false);
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 40) {
+        setNavbarScrolled(true);
+      } else {
+        setNavbarScrolled(false);
+      }
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   return (
-    <div className={`theme-${themeAccent}`}>
-      {/* Background ambient neon glow filters */}
+    <div className={`theme-${themeAccent} theme-mode-${themeMode}`}>
+      {/* Background ambient radial glow layers */}
       <div className="bg-ambient-glow">
         <div className="glow-blob glow-blob-1"></div>
         <div className="glow-blob glow-blob-2"></div>
@@ -585,7 +898,7 @@ function App() {
       </div>
 
       {/* HEADER & STICKY GLASSMORPHIC NAVBAR */}
-      <header className="navbar">
+      <header className={`navbar ${navbarScrolled ? 'scrolled' : ''}`}>
         <div className="container nav-container">
           <a href="#" className="logo" id="auraevents-logo">
             <svg className="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -593,33 +906,72 @@ function App() {
             </svg>
             AuraEvents
           </a>
-          <nav className="nav-links">
-            <a href="#" className="nav-link active">Home</a>
-            <a href="#calculator" className="nav-link">Cost Calculator</a>
-            <a href="#services" className="nav-link">
+          
+          <nav className={`nav-links ${mobileMenuOpen ? 'active' : ''}`}>
+            <a href="#" className="nav-link active" onClick={() => setMobileMenuOpen(false)}>Home</a>
+            <a href="#calculator" className="nav-link" onClick={() => setMobileMenuOpen(false)}>Calculator</a>
+            <a href="#services" className="nav-link" onClick={() => setMobileMenuOpen(false)}>
               Services
-              <span className="nav-badge">{services.length || 18}</span>
+              <span className="nav-badge">{services.length}</span>
             </a>
-            <a href="#db-console" className="nav-link" style={{color: 'var(--accent-text)', fontWeight: '700'}}>
+            <a href="#db-console" className="nav-link" style={{color: 'var(--accent-text)', fontWeight: '700'}} onClick={() => setMobileMenuOpen(false)}>
               DBMS Dashboard
             </a>
-            <a href="#showcase" className="nav-link">Event Hub</a>
-            <a href="#faq" className="nav-link">FAQ</a>
+            <a href="#showcase" className="nav-link" onClick={() => setMobileMenuOpen(false)}>Showcases</a>
+            <a href="#faq" className="nav-link" onClick={() => setMobileMenuOpen(false)}>FAQ</a>
           </nav>
-          <div style={{display: 'flex', gap: '0.5rem'}}>
+
+          <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+            {/* SUN/MOON THEME MODE TOGGLE BUTTON */}
+            <button 
+              onClick={handleToggleThemeMode} 
+              className="theme-mode-toggle-btn"
+              title={themeMode === 'dark' ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              aria-label="Toggle dark/light theme mode"
+            >
+              {themeMode === 'dark' ? '☀️' : '🌙'}
+            </button>
+
             <button 
               onClick={() => setShowSqlModal(true)} 
               className="btn btn-secondary"
               style={{padding: '0.6rem 1.2rem', fontSize: '0.85rem'}}
             >
-              Get Schema SQL
+              Get SQL
             </button>
+            
+            {userSession ? (
+              <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                <span className="db-stats-pill" style={{background: 'var(--accent-subtle)', borderColor: 'var(--accent-primary)', fontSize: '0.8rem', padding: '0.5rem 0.9rem'}}>
+                  👨‍💻 {userSession.name}
+                </span>
+                <button 
+                  onClick={handleSignOut} 
+                  className="btn btn-accent" 
+                  style={{padding: '0.5rem 1rem', fontSize: '0.8rem', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.1)'}}
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => { setAuthMode('login'); setShowAuthModal(true); }} 
+                className="btn btn-primary btn-glow"
+                style={{padding: '0.6rem 1.35rem', fontSize: '0.85rem'}}
+              >
+                Sign In
+              </button>
+            )}
+
+            {/* Mobile Hamburger menu toggle */}
             <button 
-              onClick={() => setShowBookingModal(true)} 
-              className="btn btn-primary btn-glow"
-              id="header-cta-btn"
+              className={`hamburger-menu-btn ${mobileMenuOpen ? 'active' : ''}`}
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label="Toggle mobile navigation menu"
             >
-              Book Setup
+              <span className="hamburger-line"></span>
+              <span className="hamburger-line"></span>
+              <span className="hamburger-line"></span>
             </button>
           </div>
         </div>
@@ -666,7 +1018,7 @@ function App() {
       </div>
 
       {/* HERO SECTION */}
-      <section className="hero-section" style={{paddingTop: '3rem'}}>
+      <section className="hero-section" style={{paddingTop: '4rem', paddingBottom: '3.5rem'}}>
         <div className="container">
           <div className="hero-tag">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '4px'}}>
@@ -674,36 +1026,164 @@ function App() {
             </svg>
             Interactive DBMS Grading Project
           </div>
-          <h1 className="hero-heading">
-            Database-Centric Event Manager Software
+          <h1 className="hero-heading" style={{fontSize: 'clamp(2.5rem, 5vw, 4.2rem)', fontWeight: '800'}}>
+            Plan <span style={{ background: 'linear-gradient(to right, #EC4899, #7C3AED)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Extraordinary Events</span> With Ease
           </h1>
           <p className="hero-subheading">
-            Store and retrieve reservations in real-time. Build layout budgets, edit active transactions, and cancel infrastructure orders using Supabase PostgreSQL tables and secure Row-Level Security rules.
+            A premium startup-level event coordination software built to publish plans dynamically to PostgreSQL tables, track transaction analytics live, and generate scanned entry tickets.
           </p>
           <div className="hero-ctas">
-            <a href="#calculator" className="btn btn-primary btn-glow">Configure Event Calculator</a>
-            <a href="#db-console" className="btn btn-secondary">Open Database Log</a>
+            <a href="#services" className="btn btn-primary btn-glow">Explore Events</a>
+            <button onClick={() => { setAuthMode('login'); setShowAuthModal(true); }} className="btn btn-secondary">Book Demo</button>
           </div>
 
-          {/* Key Metrics Stats Banner */}
-          <div className="stats-bar glass-panel">
+          {/* SaaS Branding Floating Metrics */}
+          <div className="stats-bar glass-panel" style={{marginTop: '3.5rem'}}>
             <div className="stat-item">
-              <div className="stat-value">{services.length || 18}</div>
-              <div className="stat-label">Catalog Items (DB)</div>
+              <div className="stat-value">500+</div>
+              <div className="stat-label">Events Completed</div>
             </div>
             <div className="stat-item">
-              <div className="stat-value">{bookings.length}</div>
-              <div className="stat-label">Active Bookings (DB)</div>
+              <div className="stat-value">20K+</div>
+              <div className="stat-label">Attendees Managed</div>
             </div>
             <div className="stat-item">
-              <div className="stat-value">PostgreSQL</div>
-              <div className="stat-label">Database Type</div>
+              <div className="stat-value">99%</div>
+              <div className="stat-label">Satisfaction Rate</div>
             </div>
             <div className="stat-item">
-              <div className="stat-value">RLS Policies</div>
-              <div className="stat-label">Access Controls</div>
+              <div className="stat-value" style={{fontSize: '1.8rem', lineHeight: '2.5rem'}}>₹ en-IN</div>
+              <div className="stat-label">Rupee Localization</div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* DYNAMIC SCROLLING SPONSOR LOGO MARQUEE */}
+      <section className="sponsor-marquee-section">
+        <div className="marquee-container">
+          <div className="marquee-content">
+            <div className="sponsor-logo">💼 Microsoft Events</div>
+            <div className="sponsor-logo">🎵 Spotify Live</div>
+            <div className="sponsor-logo">🥤 Pepsi Fest</div>
+            <div className="sponsor-logo">⚡ Redbull Arena</div>
+            <div className="sponsor-logo">🎮 TwitchCon</div>
+            <div className="sponsor-logo">🎨 Google I/O</div>
+            {/* Duplicate for infinite loop */}
+            <div className="sponsor-logo">💼 Microsoft Events</div>
+            <div className="sponsor-logo">🎵 Spotify Live</div>
+            <div className="sponsor-logo">🥤 Pepsi Fest</div>
+            <div className="sponsor-logo">⚡ Redbull Arena</div>
+          </div>
+        </div>
+      </section>
+
+      {/* WHY CHOOSE US MARKETING SECTION */}
+      <section className="container" style={{padding: '5rem 0 2rem'}}>
+        <div className="section-header">
+          <span className="section-tag">Key Features</span>
+          <h2 className="section-title">Why Plan With AuraEvents?</h2>
+          <p className="section-desc">Experience premium technical production coupled with rock-solid database integrity.</p>
+        </div>
+        <div className="why-choose-grid">
+          <div className="why-card glass-panel">
+            <div className="why-icon-box">⛺</div>
+            <h3 className="why-title">Weatherproof Tents</h3>
+            <p className="why-desc">German pagoda canopy designs tailored for massive college grounds and weddings.</p>
+          </div>
+          <div className="why-card glass-panel">
+            <div className="why-icon-box">🔊</div>
+            <h3 className="why-title">80K Watt Audio</h3>
+            <p className="why-desc">High-Decibel sound array installations playing crystal clear concert music.</p>
+          </div>
+          <div className="why-card glass-panel">
+            <div className="why-icon-box">🎫</div>
+            <h3 className="why-title">Digital Entry Gates</h3>
+            <p className="why-desc">Instant check-in and attendee scan logs backing up database indexing.</p>
+          </div>
+          <div className="why-card glass-panel">
+            <div className="why-icon-box">📈</div>
+            <h3 className="why-title">Live DBMS Sync</h3>
+            <p className="why-desc">Real-time analytical metrics illustrating budgets and slots directly in PostgreSQL.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* UPCOMING EVENTS GALLERY TRACK */}
+      <section className="upcoming-carousel-section container">
+        <div className="section-header">
+          <span className="section-tag">Featured Success Stories</span>
+          <h2 className="section-title">Upcoming Mega Events</h2>
+          <p className="section-desc">Explore the live plans currently active in our scheduling registry.</p>
+        </div>
+        <div className="carousel-viewport">
+          <div className="carousel-track" style={{transform: `translateX(-${carouselIndex * 336}px)`}}>
+            <div className="carousel-card" style={{backgroundImage: 'linear-gradient(rgba(0,0,0,0.1), rgba(0,0,0,0.85)), url(https://images.unsplash.com/photo-1506157786151-b8491531f063?auto=format&fit=crop&w=500&q=80)'}}>
+              <div className="carousel-card-content">
+                <div>
+                  <span className="carousel-card-date">15 Jun 2026</span>
+                  <h3 className="carousel-card-title">Rock Fest Concert</h3>
+                  <p className="carousel-card-desc">Stadium audio array arrays and special pyrotechnics.</p>
+                </div>
+                <div className="carousel-card-footer">
+                  <span className="carousel-card-price">₹3,45,000</span>
+                  <a href="#calculator" className="btn btn-primary" style={{padding: '0.4rem 0.85rem', fontSize: '0.75rem'}}>Check Specs</a>
+                </div>
+              </div>
+            </div>
+
+            <div className="carousel-card" style={{backgroundImage: 'linear-gradient(rgba(0,0,0,0.1), rgba(0,0,0,0.85)), url(https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=500&q=80)'}}>
+              <div className="carousel-card-content">
+                <div>
+                  <span className="carousel-card-date">22 Aug 2026</span>
+                  <h3 className="carousel-card-title">Bespoke Palace Wedding</h3>
+                  <p className="carousel-card-desc">Royal decoration backdrops, catering menus, and valets.</p>
+                </div>
+                <div className="carousel-card-footer">
+                  <span className="carousel-card-price">₹12,80,000</span>
+                  <a href="#calculator" className="btn btn-primary" style={{padding: '0.4rem 0.85rem', fontSize: '0.75rem'}}>Check Specs</a>
+                </div>
+              </div>
+            </div>
+
+            <div className="carousel-card" style={{backgroundImage: 'linear-gradient(rgba(0,0,0,0.1), rgba(0,0,0,0.85)), url(https://images.unsplash.com/photo-1461896836934-ffe607ba8211?auto=format&fit=crop&w=500&q=80)'}}>
+              <div className="carousel-card-content">
+                <div>
+                  <span className="carousel-card-date">09 Sep 2026</span>
+                  <h3 className="carousel-card-title">National Arena Cup</h3>
+                  <p className="carousel-card-desc">Sky drone video live stream feeds and crowd control crews.</p>
+                </div>
+                <div className="carousel-card-footer">
+                  <span className="carousel-card-price">₹5,40,000</span>
+                  <a href="#calculator" className="btn btn-primary" style={{padding: '0.4rem 0.85rem', fontSize: '0.75rem'}}>Check Specs</a>
+                </div>
+              </div>
+            </div>
+
+            <div className="carousel-card" style={{backgroundImage: 'linear-gradient(rgba(0,0,0,0.1), rgba(0,0,0,0.85)), url(https://images.unsplash.com/photo-1563245372-f21724e3856d?auto=format&fit=crop&w=500&q=80)'}}>
+              <div className="carousel-card-content">
+                <div>
+                  <span className="carousel-card-date">14 Oct 2026</span>
+                  <h3 className="carousel-card-title">Tech Keynote Gala</h3>
+                  <p className="carousel-card-desc">High-definition projectors, formal emcees, and gigabit WiFi.</p>
+                </div>
+                <div className="carousel-card-footer">
+                  <span className="carousel-card-price">₹2,80,000</span>
+                  <a href="#calculator" className="btn btn-primary" style={{padding: '0.4rem 0.85rem', fontSize: '0.75rem'}}>Check Specs</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="carousel-dots">
+          {[0, 1].map(i => (
+            <button 
+              key={i} 
+              className={`carousel-dot ${carouselIndex === i ? 'active' : ''}`}
+              onClick={() => setCarouselIndex(i)}
+              aria-label={`Slide group ${i+1}`}
+            ></button>
+          ))}
         </div>
       </section>
 
@@ -795,7 +1275,7 @@ function App() {
                 {loadingServices ? (
                   <div style={{padding: '2rem', textAlign: 'center', color: 'var(--text-muted)'}}>Connecting to Services Catalog Table...</div>
                 ) : (
-                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto', paddingRight: '0.5rem', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem'}}>
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.5rem', maxHeight: '180px', overflowY: 'auto', paddingRight: '0.5rem', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem'}}>
                     {services.map((service) => {
                       const isChecked = selectedServices.includes(service.id);
                       return (
@@ -827,6 +1307,26 @@ function App() {
                       );
                     })}
                   </div>
+                )}
+              </div>
+
+              {/* AI SMART CAPABILITIES RECOMMENDATIONS WIDGET */}
+              <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'rgba(124, 58, 237, 0.04)', border: '1px dashed var(--accent-primary)', borderRadius: 'var(--radius-md)' }}>
+                <h4 style={{ fontSize: '0.85rem', color: 'var(--accent-text)', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span>💡</span> AI Setup Recommender
+                </h4>
+                {selectedServices.includes('stage') && !selectedServices.includes('lights') ? (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: 0 }}>
+                    <strong>Recommendations Alert:</strong> Since you configured <strong>Custom Stage Design</strong>, we highly recommend adding <strong>Stage Lights & Lasers</strong> to elevate the stage atmosphere!
+                  </p>
+                ) : selectedServices.includes('speakers') && !selectedServices.includes('stage') ? (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: 0 }}>
+                    <strong>Recommendations Alert:</strong> Since you configured <strong>Stage Speakers & Sound</strong>, consider adding <strong>Custom Stage Design</strong> to secure a beautiful platform base for your arrays!
+                  </p>
+                ) : (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: 0 }}>
+                    Your active capabilities checklist looks beautifully harmonized for this event model. Ready to lock plans!
+                  </p>
                 )}
               </div>
             </div>
@@ -874,6 +1374,14 @@ function App() {
                 )}
               </div>
 
+              {/* AI GENERATED EVENT DESCRIPTION BOX */}
+              {aiDescription && (
+                <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                  <strong style={{ color: '#ffffff', display: 'block', marginBottom: '0.2rem' }}>🤖 AI Promotional Pitch</strong>
+                  {aiDescription}
+                </div>
+              )}
+
               {/* Total Calculation Display */}
               <div>
                 <div className="summary-cost-block">
@@ -884,13 +1392,24 @@ function App() {
                   </div>
                 </div>
 
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  <button 
+                    onClick={handleGenerateAiPromo} 
+                    className="btn btn-accent" 
+                    style={{ flexGrow: 1, padding: '0.6rem 0.85rem', fontSize: '0.75rem', justifyContent: 'center' }}
+                    disabled={aiGenerating}
+                  >
+                    {aiGenerating ? 'Writing Pitch...' : '✨ AI Event Pitch'}
+                  </button>
+                </div>
+
                 <button 
-                  onClick={() => setShowBookingModal(true)} 
+                  onClick={() => { setBookingStep('details'); setShowBookingModal(true); }} 
                   className="btn btn-primary btn-glow" 
                   style={{width: '100%', justifyContent: 'center'}}
                   id="checkout-book-btn"
                 >
-                  Write to PostgreSQL Table
+                  Save Event Plan
                 </button>
               </div>
             </div>
@@ -902,144 +1421,451 @@ function App() {
       <section className="database-dashboard-section" id="db-console">
         <div className="container">
           <div className="section-header">
-            <span className="section-tag" style={{color: 'var(--accent-text)'}}>DBMS Active Log</span>
-            <h2 className="section-title">Live Transactions Database Visualizer</h2>
+            <span className="section-tag" style={{color: 'var(--accent-text)'}}>DBMS Control Board</span>
+            <h2 className="section-title">Relational Transaction Center</h2>
             <p className="section-desc">
-              Execute full CRUD operations directly on the <code>bookings</code> PostgreSQL table below. View, update date/guest count, and delete records seamlessly.
+              Audit the database, verify CHECK date constraints, manage row listings, and track live SQL operations.
             </p>
           </div>
 
-          <div className="glass-panel" style={{padding: '2.5rem'}}>
-            <div className="db-controls">
-              {/* Database Search query filter */}
-              <div style={{position: 'relative', width: '100%', maxWidth: '24rem'}}>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="Search bookings by client name, email, or event type..."
-                  value={dbSearchQuery}
-                  onChange={(e) => setDbSearchQuery(e.target.value)}
-                  style={{paddingLeft: '2.5rem', borderRadius: '8px'}}
-                  id="db-search-input"
-                />
-                <svg style={{position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', width: '1rem', height: '1rem', color: 'var(--text-muted)'}} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
-                  <circle cx="11" cy="11" r="8"/>
-                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
+          {/* DYNAMIC SaaS DASHBOARD METRICS */}
+          <div className="analytics-dashboard-wrapper">
+            <div className="analytics-grid">
+              <div className="analytics-card glass-panel">
+                <div className="analytics-card-header">
+                  <span>Saved Plans</span>
+                  <svg className="analytics-card-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="16" y1="2" x2="16" y2="6"/>
+                    <line x1="8" y1="2" x2="8" y2="6"/>
+                    <line x1="3" y1="10" x2="21" y2="10"/>
+                  </svg>
+                </div>
+                <div className="analytics-card-val">{dbMetrics.totalEvents}</div>
+                <div className="analytics-card-trend">Active Row Count</div>
               </div>
 
-              {/* Status information and logs stats counter */}
-              <div style={{display: 'flex', alignItems: 'center', gap: '1rem'}}>
-                <div className="db-stats-pill">
-                  {filteredBookingsLogs.length} of {bookings.length} Rows Logged
+              <div className="analytics-card glass-panel">
+                <div className="analytics-card-header">
+                  <span>Tickets Sold</span>
+                  <svg className="analytics-card-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                  </svg>
                 </div>
-                <div className="db-status-info">
-                  <div className={`status-indicator ${dbConnected ? 'connected' : 'fallback'}`}></div>
-                  <div>
-                    <div className="db-status-text">{dbConnected ? 'Supabase DB Linked' : 'Local Sandbox Mock'}</div>
-                  </div>
+                <div className="analytics-card-val">{(dbMetrics.totalGuests + liveAttendeeCount).toLocaleString()}</div>
+                <div className="analytics-card-trend">Live Sum of guest_count</div>
+              </div>
+
+              <div className="analytics-card glass-panel">
+                <div className="analytics-card-header">
+                  <span>Projected Revenue</span>
+                  <span style={{fontSize: '0.95rem', color: 'var(--accent-primary)', fontWeight: '800'}}>₹</span>
                 </div>
+                <div className="analytics-card-val" style={{fontSize: '1.5rem', lineHeight: '2.2rem'}}>
+                  {formatDirectINR(dbMetrics.totalRevenue)}
+                </div>
+                <div className="analytics-card-trend">Sum of total_price</div>
+              </div>
+
+              <div className="analytics-card glass-panel">
+                <div className="analytics-card-header">
+                  <span>Unique Clients</span>
+                  <svg className="analytics-card-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                    <circle cx="12" cy="12" r="4"/>
+                    <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/>
+                  </svg>
+                </div>
+                <div className="analytics-card-val">{dbMetrics.activeClients}</div>
+                <div className="analytics-card-trend">Distinct client_email</div>
               </div>
             </div>
 
-            {/* Live bookings visual data log table */}
-            {loadingBookings ? (
-              <div style={{padding: '4rem', textAlign: 'center', color: 'var(--text-secondary)'}}>
-                Querying bookings table from PostgreSQL backend...
+            {/* DYNAMIC SVG CHART GRAPHICS */}
+            {bookings.length > 0 && (
+              <div className="charts-container">
+                {/* SVG Bar Chart: Guest Distribution */}
+                <div className="chart-card glass-panel">
+                  <h3>
+                    <span style={{color: 'var(--accent-text)'}}>📊</span>
+                    Guest Distribution per Event
+                  </h3>
+                  <div className="chart-svg-wrapper flex-center" style={{padding: '1rem'}}>
+                    <svg width="100%" height="100%" viewBox="0 0 400 200" preserveAspectRatio="none">
+                      {/* Grid lines */}
+                      <line x1="30" y1="20" x2="390" y2="20" stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+                      <line x1="30" y1="90" x2="390" y2="90" stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+                      <line x1="30" y1="160" x2="390" y2="160" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
+                      
+                      {bookings.slice(0, 7).map((b, i) => {
+                        const barWidth = 30;
+                        const spacing = 45;
+                        const x = 50 + i * spacing;
+                        const scaleFactor = b.guest_count / dbMetrics.maxGuests;
+                        const barHeight = Math.max(10, scaleFactor * 140);
+                        const y = 160 - barHeight;
+                        
+                        return (
+                          <g key={b.id}>
+                            {/* Bar card rect */}
+                            <rect
+                              x={x}
+                              y={y}
+                              width={barWidth}
+                              height={barHeight}
+                              rx="4"
+                              fill="url(#barGradient)"
+                              style={{transition: 'var(--transition-smooth)'}}
+                            />
+                            {/* Value text above bar */}
+                            <text
+                              x={x + barWidth / 2}
+                              y={y - 5}
+                              fill="var(--text-secondary)"
+                              fontSize="8"
+                              textAnchor="middle"
+                            >
+                              {b.guest_count}
+                            </text>
+                            {/* Label under bar */}
+                            <text
+                              x={x + barWidth / 2}
+                              y="175"
+                              fill="var(--text-muted)"
+                              fontSize="7"
+                              textAnchor="middle"
+                            >
+                              {b.client_name.split(' ')[0]}
+                            </text>
+                          </g>
+                        );
+                      })}
+                      {/* Definitions for visual gradients */}
+                      <defs>
+                        <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--accent-primary)"/>
+                          <stop offset="100%" stopColor="var(--accent-secondary)" stopOpacity="0.2"/>
+                        </linearGradient>
+                      </defs>
+                    </svg>
+                  </div>
+                </div>
+
+                {/* SVG Line Chart: Budget Distribution Curve */}
+                <div className="chart-card glass-panel">
+                  <h3>
+                    <span style={{color: 'var(--accent-text)'}}>📈</span>
+                    Cost Distribution Trend Curve
+                  </h3>
+                  <div className="chart-svg-wrapper flex-center" style={{padding: '1rem'}}>
+                    <svg width="100%" height="100%" viewBox="0 0 400 200" preserveAspectRatio="none">
+                      {/* Grid lines */}
+                      <line x1="30" y1="20" x2="390" y2="20" stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+                      <line x1="30" y1="90" x2="390" y2="90" stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+                      <line x1="30" y1="160" x2="390" y2="160" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
+
+                      {(() => {
+                        const activeList = bookings.slice(0, 7);
+                        const points = activeList.map((b, i) => {
+                          const spacing = 50;
+                          const x = 50 + i * spacing;
+                          const scale = Number(b.total_price) / dbMetrics.maxCost;
+                          const y = 160 - Math.max(10, scale * 130);
+                          return { x, y, b };
+                        });
+
+                        const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+                        const areaPath = points.length > 0 
+                          ? `${linePath} L ${points[points.length - 1].x} 160 L ${points[0].x} 160 Z`
+                          : '';
+
+                        return (
+                          <g>
+                            {/* Area Glow under Line */}
+                            {areaPath && (
+                              <path
+                                d={areaPath}
+                                fill="url(#lineAreaGradient)"
+                                style={{transition: 'var(--transition-smooth)'}}
+                              />
+                            )}
+                            {/* Main Stroke Line */}
+                            {linePath && (
+                              <path
+                                d={linePath}
+                                fill="none"
+                                stroke="var(--accent-primary)"
+                                strokeWidth="3"
+                                strokeLinecap="round"
+                                style={{transition: 'var(--transition-smooth)'}}
+                              />
+                            )}
+                            {/* Data points dots */}
+                            {points.map((p, i) => (
+                              <g key={i}>
+                                <circle
+                                  cx={p.x}
+                                  cy={p.y}
+                                  r="4"
+                                  fill="#ffffff"
+                                  stroke="var(--accent-secondary)"
+                                  strokeWidth="2.5"
+                                  style={{transition: 'var(--transition-smooth)'}}
+                                />
+                                <text
+                                  x={p.x}
+                                  y={p.y - 8}
+                                  fill="var(--accent-text)"
+                                  fontSize="7"
+                                  fontWeight="bold"
+                                  textAnchor="middle"
+                                >
+                                  ₹{(Number(p.b.total_price) / 1000).toFixed(0)}K
+                                </text>
+                                <text
+                                  x={p.x}
+                                  y="175"
+                                  fill="var(--text-muted)"
+                                  fontSize="7"
+                                  textAnchor="middle"
+                                >
+                                  {p.b.client_name.split(' ')[0]}
+                                </text>
+                              </g>
+                            ))}
+                            <defs>
+                              <linearGradient id="lineAreaGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="var(--accent-primary)" stopOpacity="0.25"/>
+                                <stop offset="100%" stopColor="var(--accent-primary)" stopOpacity="0.0"/>
+                              </linearGradient>
+                            </defs>
+                          </g>
+                        );
+                      })()}
+                    </svg>
+                  </div>
+                </div>
               </div>
-            ) : filteredBookingsLogs.length === 0 ? (
-              <div style={{padding: '4rem', textAlign: 'center', border: '1px dashed var(--border-glass)', borderRadius: 'var(--radius-lg)', color: 'var(--text-muted)'}}>
-                <span style={{fontSize: '2.5rem', display: 'block', marginBottom: '1rem'}}>📋</span>
-                <h4 style={{color: '#ffffff', marginBottom: '0.5rem'}}>No Booking Records Found</h4>
-                <p style={{fontSize: '0.85rem'}}>There are no transactions logged matching your search. Create one using the calculator above!</p>
+            )}
+          </div>
+
+          <div className="glass-panel" style={{padding: '2.5rem'}}>
+            {/* ADMIN / CLIENT TAB DRAWER TOGGLES */}
+            <div className="admin-tab-bar">
+              <button 
+                onClick={() => setIsAdminView(false)} 
+                className={`admin-tab-btn ${!isAdminView ? 'active' : ''}`}
+              >
+                📋 Bookings Client Registry
+              </button>
+              <button 
+                onClick={() => setIsAdminView(true)} 
+                className={`admin-tab-btn ${isAdminView ? 'active' : ''}`}
+                id="admin-override-btn"
+              >
+                🔐 Administrative Control Center
+              </button>
+            </div>
+
+            {!isAdminView ? (
+              <div>
+                <div className="db-controls">
+                  {/* Database Search query filter */}
+                  <div style={{position: 'relative', width: '100%', maxWidth: '24rem'}}>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Search saved plans by name, email, type..."
+                      value={dbSearchQuery}
+                      onChange={(e) => setDbSearchQuery(e.target.value)}
+                      style={{paddingLeft: '2.5rem', borderRadius: '8px'}}
+                      id="db-search-input"
+                    />
+                    <svg style={{position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', width: '1rem', height: '1rem', color: 'var(--text-muted)'}} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                      <circle cx="11" cy="11" r="8"/>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                  </div>
+
+                  <div style={{display: 'flex', alignItems: 'center', gap: '1rem'}}>
+                    <div className="db-stats-pill">
+                      {filteredBookingsLogs.length} of {bookings.length} Plans Loaded
+                    </div>
+                    <div className="db-status-info">
+                      <div className={`status-indicator ${dbConnected ? 'connected' : 'fallback'}`}></div>
+                      <div className="db-status-text">{dbConnected ? 'Supabase DB Linked' : 'Local Sandbox Mock'}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live bookings visual data log table */}
+                {loadingBookings ? (
+                  <div style={{padding: '4rem', textAlign: 'center', color: 'var(--text-secondary)'}}>
+                    Querying bookings table from PostgreSQL backend...
+                  </div>
+                ) : filteredBookingsLogs.length === 0 ? (
+                  <div style={{padding: '4rem', textAlign: 'center', border: '1px dashed var(--border-glass)', borderRadius: 'var(--radius-lg)', color: 'var(--text-muted)'}}>
+                    <span style={{fontSize: '2.5rem', display: 'block', marginBottom: '1rem'}}>📋</span>
+                    <h4 style={{color: '#ffffff', marginBottom: '0.5rem'}}>No Booking Records Found</h4>
+                    <p style={{fontSize: '0.85rem'}}>There are no transactions logged matching your search. Create one using the calculator above!</p>
+                  </div>
+                ) : (
+                  <div className="db-table-container">
+                    <table className="db-table">
+                      <thead>
+                        <tr>
+                          <th className="db-th">Target Date</th>
+                          <th className="db-th">Client Details</th>
+                          <th className="db-th">Event Model</th>
+                          <th className="db-th">Guests Limit</th>
+                          <th className="db-th">Configured Modules</th>
+                          <th className="db-th">Committed Price</th>
+                          <th className="db-th" style={{textAlign: 'center'}}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredBookingsLogs.map(b => (
+                          <tr key={b.id} className="db-tr">
+                            <td className="db-td" style={{fontFamily: 'var(--font-heading)', fontWeight: '700'}}>
+                              {b.event_date}
+                            </td>
+                            <td className="db-td">
+                              <div className="db-client-info">
+                                <span className="db-client-name" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{b.client_name}</span>
+                                <span className="db-client-email">{b.client_email}</span>
+                              </div>
+                            </td>
+                            <td className="db-td">
+                              <span className={`db-type-badge db-type-${b.event_type}`}>
+                                {b.event_type}
+                              </span>
+                            </td>
+                            <td className="db-td" style={{fontWeight: '600'}}>
+                              {b.guest_count}
+                            </td>
+                            <td className="db-td">
+                              <div className="db-services-tags">
+                                {b.selected_services && b.selected_services.length > 0 ? (
+                                  b.selected_services.map(sId => (
+                                    <span key={sId} className="db-services-tag">
+                                      {services.find(s => s.id === sId)?.title || sId}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span style={{color: 'var(--text-muted)', fontSize: '0.75rem'}}>No add-on layers</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="db-td" style={{fontWeight: '800', color: 'var(--accent-text)', fontSize: '0.95rem'}}>
+                              {formatDirectINR(b.total_price)}
+                            </td>
+                            <td className="db-td">
+                              <div className="db-actions" style={{justifyContent: 'center'}}>
+                                <button 
+                                  onClick={() => handleOpenEditModal(b)} 
+                                  className="db-btn-icon edit" 
+                                  title="Edit/Reschedule record"
+                                >
+                                  ✏️
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteBooking(b.id, b.client_name)} 
+                                  className="db-btn-icon delete" 
+                                  title="Annul/Cancel booking row"
+                                >
+                                  🗑️
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="db-table-container">
-                <table className="db-table">
-                  <thead>
-                    <tr>
-                      <th className="db-th">Date</th>
-                      <th className="db-th">Client Details</th>
-                      <th className="db-th">Event Model</th>
-                      <th className="db-th">Guests</th>
-                      <th className="db-th">Selected Modules</th>
-                      <th className="db-th">Calculated Price</th>
-                      <th className="db-th" style={{textAlign: 'center'}}>DBMS Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredBookingsLogs.map(b => (
-                      <tr key={b.id} className="db-tr">
-                        <td className="db-td" style={{fontFamily: 'var(--font-heading)', fontWeight: '700', color: '#ffffff'}}>
-                          {b.event_date}
-                        </td>
-                        <td className="db-td">
-                          <div className="db-client-info">
-                            <span className="db-client-name">{b.client_name}</span>
-                            <span className="db-client-email">{b.client_email}</span>
+              // ADMIN CONTROL PANEL WITH SERVICE CRUD
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                  <div>
+                    <h3 style={{ fontSize: '1.25rem', color: '#ffffff', marginBottom: '0.2rem' }}>Administrative Control Console</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Direct catalog CRUD operations and raw database schema execution audits.</p>
+                  </div>
+                  <button onClick={() => setShowAddServiceModal(true)} className="btn btn-primary btn-glow" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}>
+                    + Add New Capability
+                  </button>
+                </div>
+
+                <div className="grid" style={{ gridTemplateColumns: '1.2fr 0.8fr', gap: '1.5rem' }}>
+                  {/* Service catalog row listing */}
+                  <div className="glass-panel" style={{ padding: '1.5rem', overflowX: 'auto' }}>
+                    <h4 style={{ fontSize: '1rem', color: 'var(--accent-text)', marginBottom: '1rem' }}>Active Infrastructure Services Catalog</h4>
+                    <table className="db-table" style={{ fontSize: '0.8rem' }}>
+                      <thead>
+                        <tr>
+                          <th className="db-th" style={{ padding: '0.5rem' }}>ID Key</th>
+                          <th className="db-th" style={{ padding: '0.5rem' }}>Title</th>
+                          <th className="db-th" style={{ padding: '0.5rem' }}>Category</th>
+                          <th className="db-th" style={{ padding: '0.5rem' }}>Base Price (USD)</th>
+                          <th className="db-th" style={{ padding: '0.5rem' }}>Model</th>
+                          <th className="db-th" style={{ padding: '0.5rem', textAlign: 'center' }}>Remove</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {services.map(s => (
+                          <tr key={s.id} className="db-tr">
+                            <td className="db-td" style={{ fontFamily: 'monospace', fontWeight: 'bold', padding: '0.5rem' }}>{s.id}</td>
+                            <td className="db-td" style={{ padding: '0.5rem', fontWeight: 600, color: 'var(--text-primary)' }}>{s.title}</td>
+                            <td className="db-td" style={{ padding: '0.5rem' }}>{s.category}</td>
+                            <td className="db-td" style={{ padding: '0.5rem', fontWeight: 700 }}>${s.basePrice}</td>
+                            <td className="db-td" style={{ padding: '0.5rem' }}>{s.pricingModel}</td>
+                            <td className="db-td" style={{ padding: '0.5rem', textAlign: 'center' }}>
+                              {s.isStandard ? (
+                                <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>Core Locked</span>
+                              ) : (
+                                <button onClick={() => handleDeleteService(s.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f43f5e' }}>🗑️</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Simulated direct SQL transaction logging */}
+                  <div className="glass-panel" style={{ padding: '1.5rem' }}>
+                    <h4 style={{ fontSize: '1rem', color: 'var(--accent-text)', marginBottom: '0.5rem' }}>PostgreSQL Auditing Console</h4>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>Watch dynamic SQL commands execute against database index tables in real-time.</p>
+                    
+                    <div className="db-log-console">
+                      {dbSqlLogs.length === 0 ? (
+                        <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>Audit console active. Commit a budget transaction above to seed operations!</div>
+                      ) : (
+                        dbSqlLogs.map(log => (
+                          <div key={log.id} className={`db-log-line ${log.status}`}>
+                            <span style={{ color: 'var(--text-muted)' }}>[{log.timestamp}]</span> [{log.operation.toUpperCase()}] {log.sqlText}
                           </div>
-                        </td>
-                        <td className="db-td">
-                          <span className={`db-type-badge db-type-${b.event_type}`}>
-                            {b.event_type}
-                          </span>
-                        </td>
-                        <td className="db-td" style={{fontWeight: '600', color: 'var(--text-primary)'}}>
-                          {b.guest_count}
-                        </td>
-                        <td className="db-td">
-                          <div className="db-services-tags">
-                            {b.selected_services && b.selected_services.length > 0 ? (
-                              b.selected_services.map(sId => (
-                                <span key={sId} className="db-services-tag">
-                                  {services.find(s => s.id === sId)?.title || sId}
-                                </span>
-                              ))
-                            ) : (
-                              <span style={{color: 'var(--text-muted)', fontSize: '0.75rem'}}>No add-on layers</span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="db-td" style={{fontWeight: '800', color: 'var(--accent-text)', fontSize: '0.95rem'}}>
-                          {formatDirectINR(b.total_price)}
-                        </td>
-                        <td className="db-td">
-                          <div className="db-actions" style={{justifyContent: 'center'}}>
-                            {/* UPDATE trigger */}
-                            <button 
-                              onClick={() => handleOpenEditModal(b)} 
-                              className="db-btn-icon edit" 
-                              title="Edit/Reschedule record"
-                            >
-                              ✏️
-                            </button>
-                            {/* DELETE trigger */}
-                            <button 
-                              onClick={() => handleDeleteBooking(b.id, b.client_name)} 
-                              className="db-btn-icon delete" 
-                              title="Annul/Cancel booking row"
-                            >
-                              🗑️
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
             
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem'}}>
               <span style={{fontSize: '0.75rem', color: 'var(--text-muted)'}}>
-                PostgreSQL Constraints: Primary keys are unique UUID v4 strings. Default timestamps are synchronized in UTC.
+                DBMS Notice: Event date picker is protected by a <code>check_future_booking</code> PostgreSQL CHECK constraint. Past transactions are safely rejected.
               </span>
               <button 
                 onClick={() => setShowSqlModal(true)} 
                 className="btn btn-secondary" 
                 style={{padding: '0.5rem 1rem', fontSize: '0.8rem'}}
               >
-                View SQL Structure schema
+                View SQL DDL Console
               </button>
             </div>
 
@@ -1051,7 +1877,7 @@ function App() {
       <section className="services-section" id="services">
         <div className="container">
           <div className="section-header">
-            <span className="section-tag">Modular Capabilities</span>
+            <span className="section-tag">Modular Capabilities Catalog</span>
             <h2 className="section-title">Our Full Service Suite</h2>
             <p className="section-desc">
               Explore 18 complete standard and customized event infrastructure solutions. Search or filter to build your college project layout.
@@ -1103,22 +1929,38 @@ function App() {
             </div>
           ) : (
             <div className="grid services-grid">
-              {filteredServices.map((service) => {
+              {filteredServices.map((service, i) => {
                 const isSelected = selectedServices.includes(service.id);
                 const showPerGuestLabel = service.pricingModel === 'per-guest';
                 
+                // Simulated badges & seats left counters for premium visual card experience
+                const isHot = i % 4 === 0;
+                const isTrending = i % 5 === 2;
+                const seatsLeft = 8 + (i * 3) % 25;
+                
                 return (
                   <article key={service.id} className="service-card glass-panel">
+                    {/* Simulated visual SaaS badges */}
+                    {isHot && <span className="hot-pill">Hot Trending</span>}
+                    {isTrending && <span className="hot-pill" style={{background: 'linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)', boxShadow: '0 0 10px rgba(6,182,212,0.3)'}}>Trending</span>}
+                    
                     {service.isStandard && (
-                      <span className="service-badge">Core Service</span>
+                      <span className="service-badge">Core Setup</span>
                     )}
                     
                     <div>
-                      <div className="service-icon-box">
+                      <div className="service-icon-box" style={{marginTop: (isHot || isTrending) ? '1rem' : '0'}}>
                         {Icons[service.iconKey] ? Icons[service.iconKey]('service-icon') : Icons.Infrastructure('service-icon')}
                       </div>
                       <h3 className="service-title">{service.title}</h3>
                       <p className="service-desc">{service.description}</p>
+                    </div>
+
+                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', padding: '0.25rem 0'}}>
+                      <span className="seats-badge">Category: {service.category}</span>
+                      <span className={`seats-badge ${seatsLeft < 12 ? 'low' : ''}`}>
+                        {seatsLeft} Slots Left
+                      </span>
                     </div>
 
                     <div className="service-footer">
@@ -1145,6 +1987,61 @@ function App() {
               })}
             </div>
           )}
+        </div>
+      </section>
+
+      {/* PRICING PLANS PLANS SECTION */}
+      <section className="pricing-section container" id="pricing">
+        <div className="section-header">
+          <span className="section-tag">Academic Subscriptions</span>
+          <h2 className="section-title">Transparent Tier Plans</h2>
+          <p className="section-desc">Tiered pricing configurations tailored for budgets ranging from student seminars to college fests.</p>
+        </div>
+        <div className="pricing-grid">
+          <div className="pricing-card glass-panel">
+            <div>
+              <h3 className="pricing-plan-title">Seminar Basic</h3>
+              <div className="pricing-plan-price">₹12,500 <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/ event</span></div>
+              <ul className="pricing-plan-features">
+                <li className="pricing-plan-feature">Up to 250 guest count limit</li>
+                <li className="pricing-plan-feature">Standard stage speakers</li>
+                <li className="pricing-plan-feature">HD projectors & backdrop screens</li>
+                <li className="pricing-plan-feature">Local sandbox DBMS storage</li>
+              </ul>
+            </div>
+            <a href="#calculator" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>Choose Basic</a>
+          </div>
+
+          <div className="pricing-card glass-panel popular">
+            <span className="pricing-card-badge">Best Choice</span>
+            <div>
+              <h3 className="pricing-plan-title">Cultural Fest Pro</h3>
+              <div className="pricing-plan-price">₹85,000 <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/ event</span></div>
+              <ul className="pricing-plan-features">
+                <li className="pricing-plan-feature">Up to 1,500 guest count limit</li>
+                <li className="pricing-plan-feature">Bespoke stage canopy design</li>
+                <li className="pricing-plan-feature">Line array speakers & lights</li>
+                <li className="pricing-plan-feature">AI recommended specifications</li>
+                <li className="pricing-plan-feature">Supabase PostgreSQL integration</li>
+              </ul>
+            </div>
+            <a href="#calculator" className="btn btn-primary btn-glow" style={{ width: '100%', justifyContent: 'center' }}>Choose Fest Pro</a>
+          </div>
+
+          <div className="pricing-card glass-panel">
+            <div>
+              <h3 className="pricing-plan-title">Mega Arena Elite</h3>
+              <div className="pricing-plan-price">₹2,45,000 <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/ event</span></div>
+              <ul className="pricing-plan-features">
+                <li className="pricing-plan-feature">Unlimited attendees capacity</li>
+                <li className="pricing-plan-feature">Massive stadium infrastructure</li>
+                <li className="pricing-plan-feature">Sky drone live streaming views</li>
+                <li className="pricing-plan-feature">Special effects and cold pyrotechnics</li>
+                <li className="pricing-plan-feature">Dedicated PostgreSQL DBA support</li>
+              </ul>
+            </div>
+            <a href="#calculator" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>Choose Arena Elite</a>
+          </div>
         </div>
       </section>
 
@@ -1442,7 +2339,7 @@ function App() {
           <div className="footer-grid">
             <div className="footer-brand">
               <h4>AuraEvents</h4>
-              <p>State-of-the-art modular infrastructure systems enabling students and managers to construct premium concerts, weddings, and cultural festivals.</p>
+              <p>State-of-the-art modular infrastructure systems enabling students and managers to construct premium fests, concerts, and marriages.</p>
               <div className="footer-socials">
                 <a href="#" className="footer-social-icon" aria-label="AuraEvents Github">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1512,6 +2409,94 @@ function App() {
          MODALS & OVERLAYS PORTALS
          ------------------------------------------------------------- */}
 
+      {/* ADMIN ADD SERVICE MODAL */}
+      {showAddServiceModal && (
+        <div className="modal-overlay" onClick={() => setShowAddServiceModal(false)}>
+          <div className="modal-content glass-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '30rem' }}>
+            <button className="modal-close-btn" onClick={() => setShowAddServiceModal(false)}>✕</button>
+            <div className="modal-header">
+              <h3>Add Custom Capability Service</h3>
+              <p>Insert a new row catalog specification dynamically into database listings.</p>
+            </div>
+            <form onSubmit={handleAddService}>
+              <div className="form-group">
+                <label>Service ID Key (Lowercase, unique)</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="e.g. laser" 
+                  value={newServiceId}
+                  onChange={(e) => setNewServiceId(e.target.value.toLowerCase())}
+                  required 
+                />
+              </div>
+              <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                <label>Service Title Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="e.g. Neon Laser Show" 
+                  value={newServiceTitle}
+                  onChange={(e) => setNewServiceTitle(e.target.value)}
+                  required 
+                />
+              </div>
+              <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
+                <div className="form-group">
+                  <label>Base Price ($)</label>
+                  <input 
+                    type="number" 
+                    className="form-input" 
+                    value={newServiceBasePrice}
+                    onChange={(e) => setNewServiceBasePrice(e.target.value)}
+                    required 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Pricing Model</label>
+                  <select 
+                    className="form-input" 
+                    value={newServicePricingModel}
+                    onChange={(e) => setNewServicePricingModel(e.target.value)}
+                    style={{ background: 'var(--bg-deep)' }}
+                  >
+                    <option value="flat">flat fee</option>
+                    <option value="per-guest">per-guest fee</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                <label>Category Group</label>
+                <select 
+                  className="form-input" 
+                  value={newServiceCategory}
+                  onChange={(e) => setNewServiceCategory(e.target.value)}
+                  style={{ background: 'var(--bg-deep)' }}
+                >
+                  <option value="Infrastructure">Infrastructure</option>
+                  <option value="AV & Sound">AV & Sound</option>
+                  <option value="Food & Talent">Food & Talent</option>
+                  <option value="Logistics & Tech">Logistics & Tech</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                <label>Description (Simple language)</label>
+                <textarea 
+                  className="form-input" 
+                  placeholder="Brief service description..." 
+                  value={newServiceDesc}
+                  onChange={(e) => setNewServiceDesc(e.target.value)}
+                  required
+                ></textarea>
+              </div>
+              <button type="submit" className="btn btn-primary btn-glow" style={{ width: '100%', justifyContent: 'center', marginTop: '1.25rem' }}>
+                Publish Capability to Catalog
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* CREDENTIALS DYNAMIC PORTAL OVERLAY */}
       {showCredentialsPortal && (
         <div className="modal-overlay" onClick={() => setShowCredentialsPortal(false)}>
@@ -1577,7 +2562,7 @@ function App() {
             <button className="modal-close-btn" onClick={() => setShowSqlModal(false)}>✕</button>
             <div className="modal-header" style={{textAlign: 'left', marginBottom: '1.5rem'}}>
               <h3>PostgreSQL DBMS DDL Structure</h3>
-              <p>Copy-paste this schema structure into your Supabase SQL Editor to configure all services, bookings, and policies instantly!</p>
+              <p>Copy-paste this schema structure into your Supabase SQL Editor to configure all services, bookings, and constraints instantly!</p>
             </div>
 
             <div className="sql-console">
@@ -1605,7 +2590,7 @@ function App() {
     description <span className="sql-type">TEXT</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
     icon_key <span className="sql-type">VARCHAR(50)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
     is_standard <span className="sql-type">BOOLEAN</span> <span className="sql-keyword">DEFAULT FALSE</span>{'\n'});{'\n'}{'\n'}
-<span className="sql-comment">-- 2. Create bookings table</span>{'\n'}
+<span className="sql-comment">-- 2. Create bookings table with check constraint</span>{'\n'}
 <span className="sql-keyword">CREATE TABLE</span> bookings ({'\n'}
     id <span className="sql-type">UUID</span> <span className="sql-keyword">PRIMARY KEY DEFAULT</span> gen_random_uuid(),{'\n'}
     client_name <span className="sql-type">VARCHAR(100)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
@@ -1615,7 +2600,8 @@ function App() {
     guest_count <span className="sql-type">INTEGER</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
     selected_services <span className="sql-type">TEXT[]</span> <span className="sql-keyword">DEFAULT</span> '{}'::TEXT[] <span className="sql-keyword">NOT NULL</span>,{'\n'}
     total_price <span className="sql-type">NUMERIC(12, 2)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    created_at <span className="sql-type">TIMESTAMP WITH TIME ZONE</span> <span className="sql-keyword">DEFAULT</span> now(){'\n'});{'\n'}{'\n'}
+    created_at <span className="sql-type">TIMESTAMP WITH TIME ZONE</span> <span className="sql-keyword">DEFAULT</span> now(),{'\n'}
+    <span className="sql-keyword">CONSTRAINT</span> check_future_booking <span className="sql-keyword">CHECK</span> (event_date &gt;= <span className="sql-keyword">CURRENT_DATE</span>){'\n'});{'\n'}{'\n'}
 <span className="sql-comment">-- 3. Create inquiries feedback logs</span>{'\n'}
 <span className="sql-keyword">CREATE TABLE</span> inquiries ({'\n'}
     id <span className="sql-type">UUID</span> <span className="sql-keyword">PRIMARY KEY DEFAULT</span> gen_random_uuid(),{'\n'}
@@ -1633,68 +2619,40 @@ function App() {
         </div>
       )}
 
-      {/* CREATE BOOKING RESERVATION OVERLAY */}
+      {/* CREATE BOOKING RESERVATION OVERLAY WITH MULTI-STEP CHECKOUT AND QR CODE TICKET */}
       {showBookingModal && (
         <div className="modal-overlay" onClick={closeBookingModal}>
           <div 
             className="modal-content glass-panel" 
             onClick={(e) => e.stopPropagation()}
+            style={{maxWidth: '35rem'}}
           >
             <button className="modal-close-btn" onClick={closeBookingModal}>✕</button>
             
-            {bookingSuccess ? (
-              <div className="success-state">
-                <div className="success-icon-box">✓</div>
-                <h3 className="success-title">Relational Row Inserted!</h3>
-                <p className="success-desc">
-                  Your customized configuration has been written to the PostgreSQL table. View the transaction live on the DBMS visualizer log below!
-                </p>
-                
-                {recentBookingResult && (
-                  <div className="success-details">
-                    <div className="success-details-row">
-                      <span className="success-details-lbl">Primary key UUID:</span>
-                      <span className="success-details-val" style={{fontSize: '0.65rem', fontFamily: 'monospace', color: 'var(--accent-text)'}}>{recentBookingResult.id}</span>
-                    </div>
-                    <div className="success-details-row">
-                      <span className="success-details-lbl">Client Details:</span>
-                      <span className="success-details-val">{recentBookingResult.client_name} ({recentBookingResult.client_email})</span>
-                    </div>
-                    <div className="success-details-row">
-                      <span className="success-details-lbl">Scheduled Date:</span>
-                      <span className="success-details-val">{recentBookingResult.event_date}</span>
-                    </div>
-                    <div className="success-details-row">
-                      <span className="success-details-lbl">Event Multiplier:</span>
-                      <span className="success-details-val">{recentBookingResult.event_type} (x{EVENTS_DATA[recentBookingResult.event_type]?.multiplier})</span>
-                    </div>
-                    <div className="success-details-row">
-                      <span className="success-details-lbl">Attendance:</span>
-                      <span className="success-details-val">{recentBookingResult.guest_count} Guests</span>
-                    </div>
-                    <div className="success-details-row">
-                      <span className="success-details-lbl">Committed Price:</span>
-                      <span className="success-details-val" style={{color: 'var(--accent-primary)', fontSize: '1rem'}}>{formatDirectINR(recentBookingResult.total_price)}</span>
-                    </div>
-                  </div>
-                )}
-
-                <button 
-                  onClick={closeBookingModal} 
-                  className="btn btn-primary"
-                  style={{width: '100%', justifyContent: 'center'}}
-                >
-                  Return to Console
-                </button>
+            {/* Multi-step indicator bar */}
+            <div className="checkout-steps-bar">
+              <div className={`checkout-step ${bookingStep === 'details' ? 'active' : ''} ${bookingStep !== 'details' ? 'completed' : ''}`}>
+                <span className="checkout-step-number">1</span>
+                <span>Details</span>
               </div>
-            ) : (
+              <div className={`checkout-step ${bookingStep === 'payment' ? 'active' : ''} ${bookingStep === 'success' ? 'completed' : ''}`}>
+                <span className="checkout-step-number">2</span>
+                <span>Payment</span>
+              </div>
+              <div className={`checkout-step ${bookingStep === 'success' ? 'completed active' : ''}`}>
+                <span className="checkout-step-number">3</span>
+                <span>Ticket</span>
+              </div>
+            </div>
+
+            {bookingStep === 'details' && (
               <div>
                 <div className="modal-header">
                   <h3>Submit Transaction to Database</h3>
-                  <p>Check out your custom layout specs and click submit to commit to bookings table.</p>
+                  <p>Check out your custom layout specs and let us know who is organizing this event.</p>
                 </div>
 
-                <form onSubmit={handleBookingSubmit} id="booking-simulation-form">
+                <form onSubmit={(e) => { e.preventDefault(); setBookingStep('payment'); }} id="booking-simulation-form">
                   <div className="form-group">
                     <label htmlFor="modal-client-name">Customer Representative Name</label>
                     <input
@@ -1708,7 +2666,7 @@ function App() {
                     />
                   </div>
 
-                  <div className="form-group">
+                  <div className="form-group" style={{ marginTop: '0.75rem' }}>
                     <label htmlFor="modal-client-email">E-mail Address</label>
                     <input
                       type="email"
@@ -1721,20 +2679,21 @@ function App() {
                     />
                   </div>
 
-                  <div className="form-group">
+                  <div className="form-group" style={{ marginTop: '0.75rem' }}>
                     <label htmlFor="modal-event-date">Desired Event Target Date</label>
                     <input
                       type="date"
                       className="form-input"
                       id="modal-event-date"
                       value={bookingDate}
+                      min={minDate} // Dynamic timezone safe frontend validation constraint
                       onChange={(e) => setBookingDate(e.target.value)}
                       required
                     />
                   </div>
 
                   {/* Summary Checklist Brief in modal */}
-                  <div style={{background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1rem', marginBottom: '1.5rem', fontSize: '0.8rem'}}>
+                  <div style={{background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1rem', margin: '1.25rem 0', fontSize: '0.8rem'}}>
                     <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem'}}>
                       <span style={{color: 'var(--text-secondary)'}}>PostgreSQL Event Type:</span>
                       <span style={{fontWeight: 600}}>{EVENTS_DATA[selectedEventType]?.title}</span>
@@ -1754,9 +2713,233 @@ function App() {
                     className="btn btn-primary btn-glow" 
                     style={{width: '100%', justifyContent: 'center'}}
                   >
-                    Commit Row to Bookings Table
+                    Proceed to Payment Checkout
                   </button>
                 </form>
+              </div>
+            )}
+
+            {bookingStep === 'payment' && (
+              <div>
+                <div className="modal-header">
+                  <h3>Simulated Payment Checkout Gateway</h3>
+                  <p>Choose your gateway and complete the checkout to commit the reservation to Supabase.</p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
+                  <button 
+                    onClick={() => setPaymentMode('card')} 
+                    className={`btn ${paymentMode === 'card' ? 'btn-primary' : 'btn-secondary'}`} 
+                    style={{ flexGrow: 1, justifyContent: 'center', padding: '0.5rem' }}
+                  >
+                    💳 Card Gateway (Stripe)
+                  </button>
+                  <button 
+                    onClick={() => setPaymentMode('upi')} 
+                    className={`btn ${paymentMode === 'upi' ? 'btn-primary' : 'btn-secondary'}`} 
+                    style={{ flexGrow: 1, justifyContent: 'center', padding: '0.5rem' }}
+                  >
+                    📲 UPI Scan (Razorpay)
+                  </button>
+                </div>
+
+                {paymentMode === 'card' ? (
+                  <form onSubmit={handleBookingSubmit}>
+                    <div className="credit-card-mock">
+                      <div className="credit-card-chip"></div>
+                      <div className="credit-card-number">{cardNum ? cardNum.replace(/(\d{4})/g, '$1 ') : '•••• •••• •••• ••••'}</div>
+                      <div className="credit-card-row">
+                        <div>
+                          <span>Card Holder</span>
+                          <div style={{ fontWeight: 600 }}>{cardName || 'YOUR NAME'}</div>
+                        </div>
+                        <div>
+                          <span>Expiry</span>
+                          <div style={{ fontWeight: 600 }}>{cardExp || 'MM/YY'}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label>16-Digit Card Number</label>
+                      <input 
+                        type="text" 
+                        className="form-input" 
+                        maxLength="16"
+                        placeholder="4111 2222 3333 4444" 
+                        value={cardNum}
+                        onChange={(e) => setCardNum(e.target.value.replace(/\D/g, ''))}
+                        required 
+                      />
+                    </div>
+                    <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
+                      <div className="form-group">
+                        <label>Expiration Date</label>
+                        <input 
+                          type="text" 
+                          className="form-input" 
+                          placeholder="MM/YY" 
+                          maxLength="5"
+                          value={cardExp}
+                          onChange={(e) => setCardExp(e.target.value)}
+                          required 
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Security CVV</label>
+                        <input 
+                          type="password" 
+                          className="form-input" 
+                          placeholder="•••" 
+                          maxLength="3"
+                          value={cardCvv}
+                          onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
+                          required 
+                        />
+                      </div>
+                    </div>
+                    <div className="form-group" style={{ marginTop: '0.75rem', marginBottom: '1.25rem' }}>
+                      <label>Cardholder Full Name</label>
+                      <input 
+                        type="text" 
+                        className="form-input" 
+                        placeholder="Holder Name" 
+                        value={cardName}
+                        onChange={(e) => setCardName(e.target.value)}
+                        required 
+                      />
+                    </div>
+                    
+                    <button 
+                      type="submit" 
+                      className="btn btn-primary btn-glow" 
+                      style={{ width: '100%', justifyContent: 'center' }}
+                      disabled={paymentLoading}
+                    >
+                      {paymentLoading ? 'Authorizing Gateway Transaction...' : `Confirm & Pay ${formatINR(totalCostDetails.total)}`}
+                    </button>
+                  </form>
+                ) : (
+                  <div style={{ textAlign: 'center' }}>
+                    <div className="upi-qr-mock">
+                      <svg width="140" height="140" viewBox="0 0 100 100">
+                        {/* Custom vector QR code scan path */}
+                        <path d="M0,0 h100 v100 h-100 z" fill="#ffffff" />
+                        <rect x="8" y="8" width="24" height="24" fill="#020617" />
+                        <rect x="12" y="12" width="16" height="16" fill="#ffffff" />
+                        <rect x="68" y="8" width="24" height="24" fill="#020617" />
+                        <rect x="72" y="12" width="16" height="16" fill="#ffffff" />
+                        <rect x="8" y="68" width="24" height="24" fill="#020617" />
+                        <rect x="12" y="72" width="16" height="16" fill="#ffffff" />
+                        <rect x="36" y="36" width="28" height="28" fill="#020617" />
+                        <rect x="40" y="40" width="20" height="20" fill="#ffffff" />
+                        <rect x="15" y="40" width="10" height="10" fill="#020617" />
+                        <rect x="40" y="15" width="15" height="10" fill="#020617" />
+                        <rect x="75" y="45" width="10" height="15" fill="#020617" />
+                        <rect x="45" y="75" width="15" height="10" fill="#020617" />
+                      </svg>
+                      <div className="upi-apps">
+                        <span className="upi-app-pill">GPay</span>
+                        <span className="upi-app-pill">PhonePe</span>
+                        <span className="upi-app-pill">Paytm</span>
+                        <span className="upi-app-pill">UPI ID</span>
+                      </div>
+                    </div>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Scan this Razorpay dynamic checkout code using any UPI App to lock the pricing reservation instantly.</p>
+                    <button 
+                      onClick={handleBookingSubmit} 
+                      className="btn btn-primary btn-glow" 
+                      style={{ width: '100%', justifyContent: 'center' }}
+                      disabled={paymentLoading}
+                    >
+                      {paymentLoading ? 'Confirming UPI Payment...' : `Confirm Scan & Authorize ${formatINR(totalCostDetails.total)}`}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {bookingStep === 'success' && (
+              <div className="success-state">
+                <div className="success-icon-box" style={{marginBottom: '1rem', background: '#10b981', color: '#ffffff'}}>✓</div>
+                <h3 className="success-title">Event Plan Saved & Booked!</h3>
+                <p className="success-desc" style={{marginBottom: '1.5rem'}}>
+                  Your payment was authorized successfully. Your customized specifications are committed as a new row in the Supabase PostgreSQL 'bookings' table.
+                </p>
+                
+                {/* Visual Event Ticket Stub with QR Code */}
+                {recentBookingResult && (
+                  <div className="ticket-stub">
+                    <div className="ticket-header">
+                      <span style={{fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1rem', color: '#ffffff'}}>
+                        🎟️ AURA ENTRY TICKET
+                      </span>
+                      <span className="ticket-badge" style={{ background: '#10b981', color: '#ffffff' }}>CONFIRMED</span>
+                    </div>
+
+                    <div className="ticket-grid">
+                      <div style={{ textAlign: 'left' }}>
+                        <div className="ticket-meta-label">System Transaction UUID (Primary key)</div>
+                        <div className="ticket-meta-val" style={{fontSize: '0.65rem', fontFamily: 'monospace', color: 'var(--accent-text)'}}>{recentBookingResult.id}</div>
+
+                        <div className="ticket-meta-label">Representative Customer</div>
+                        <div className="ticket-meta-val">{recentBookingResult.client_name}</div>
+
+                        <div className="ticket-meta-label">Event Target Date & Model</div>
+                        <div className="ticket-meta-val" style={{fontSize: '0.85rem'}}>
+                          {recentBookingResult.event_date} | {recentBookingResult.event_type.toUpperCase()}
+                        </div>
+
+                        <div className="ticket-meta-label">Total Cost Locked (₹)</div>
+                        <div className="ticket-meta-val" style={{color: 'var(--accent-primary)', fontSize: '1rem', margin: 0, fontWeight: 800}}>
+                          {formatDirectINR(recentBookingResult.total_price)}
+                        </div>
+                      </div>
+
+                      {/* Mock QR Code generator block */}
+                      <div style={{display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center'}}>
+                        <div className="ticket-qr-box" style={{ background: '#ffffff', padding: '0.5rem', borderRadius: '4px' }}>
+                          <svg className="ticket-qr-svg" viewBox="0 0 100 100" style={{ width: '80px', height: '80px' }}>
+                            {/* QR Outer border */}
+                            <path d="M0,0 h100 v100 h-100 z" fill="#ffffff" />
+                            {/* QR Patterns */}
+                            <rect x="10" y="10" width="20" height="20" fill="#030712" />
+                            <rect x="15" y="15" width="10" height="10" fill="#ffffff" />
+                            
+                            <rect x="70" y="10" width="20" height="20" fill="#030712" />
+                            <rect x="75" y="15" width="10" height="10" fill="#ffffff" />
+                            
+                            <rect x="10" y="70" width="20" height="20" fill="#030712" />
+                            <rect x="15" y="75" width="10" height="10" fill="#ffffff" />
+                            
+                            <rect x="40" y="40" width="20" height="20" fill="#030712" />
+                            <rect x="45" y="45" width="10" height="10" fill="#ffffff" />
+                            
+                            {/* Small specs blocks */}
+                            <rect x="35" y="10" width="10" height="5" fill="#030712" />
+                            <rect x="55" y="15" width="5" height="15" fill="#030712" />
+                            <rect x="10" y="45" width="15" height="5" fill="#030712" />
+                            <rect x="45" y="70" width="10" height="10" fill="#030712" />
+                            <rect x="70" y="45" width="15" height="15" fill="#030712" />
+                            <rect x="80" y="75" width="10" height="5" fill="#030712" />
+                          </svg>
+                        </div>
+                        <span style={{fontSize: '0.65rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '0.5rem', display: 'block'}}>
+                          Scan for Entrance logs
+                        </span>
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                <button 
+                  onClick={closeBookingModal} 
+                  className="btn btn-primary"
+                  style={{width: '100%', justifyContent: 'center'}}
+                >
+                  Return to Dashboard
+                </button>
               </div>
             )}
           </div>
@@ -1811,6 +2994,7 @@ function App() {
                     className="form-input"
                     id="edit-event-date"
                     value={editEventDate}
+                    min={minDate} // Dynamic timezone-safe date boundary constraint
                     onChange={(e) => setEditEventDate(e.target.value)}
                     required
                   />
@@ -1900,12 +3084,176 @@ function App() {
                 className="btn btn-primary" 
                 style={{width: '100%', justifyContent: 'center', background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', boxShadow: '0 0 20px rgba(59, 130, 246, 0.2)', color: '#ffffff'}}
               >
-                Execute UPDATE Transaction
+                Save Updated Plan
               </button>
             </form>
           </div>
         </div>
       )}
+
+      {/* SIMULATED USER SIGN IN PORTAL OVERLAY */}
+      {showAuthModal && (
+        <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
+          <div 
+            className="modal-content glass-panel" 
+            onClick={(e) => e.stopPropagation()}
+            style={{maxWidth: '28rem'}}
+          >
+            <button className="modal-close-btn" onClick={() => setShowAuthModal(false)}>✕</button>
+            
+            <div className="auth-tabs">
+              <button 
+                className={`auth-tab-btn ${authMode === 'login' ? 'active' : ''}`}
+                onClick={() => setAuthMode('login')}
+              >
+                Sign In
+              </button>
+              <button 
+                className={`auth-tab-btn ${authMode === 'register' ? 'active' : ''}`}
+                onClick={() => setAuthMode('register')}
+              >
+                Create Account
+              </button>
+            </div>
+
+            <form onSubmit={handleAuthSubmit} id="user-authentication-form">
+              {authMode === 'otp' ? (
+                <div style={{textAlign: 'center'}}>
+                  <span style={{fontSize: '2.5rem', display: 'block', marginBottom: '1rem'}}>🔑</span>
+                  <h3>Verify OTP Code</h3>
+                  <p style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem'}}>
+                    We've simulated sending a 4-digit security code to your email: <strong>{authEmail || 'evaluator@university.edu'}</strong>.
+                  </p>
+                  
+                  <div className="otp-box-grid">
+                    {[0, 1, 2, 3].map(i => (
+                      <input
+                        key={i}
+                        type="text"
+                        className="otp-input"
+                        id={`otp-char-${i}`}
+                        value={authOtp[i]}
+                        onChange={(e) => handleOtpChange(i, e.target.value)}
+                        maxLength="1"
+                        required
+                      />
+                    ))}
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary" 
+                    style={{width: '100%', justifyContent: 'center', marginTop: '1rem'}}
+                  >
+                    Confirm & Unlock Admin Dashboard
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  {authMode === 'register' && (
+                    <div className="form-group">
+                      <label htmlFor="auth-name-input">Full Name</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        id="auth-name-input"
+                        placeholder="e.g. Professor Smith"
+                        value={authName}
+                        onChange={(e) => setAuthName(e.target.value)}
+                        required
+                      />
+                    </div>
+                  )}
+
+                  <div className="form-group" style={{marginTop: '1rem'}}>
+                    <label htmlFor="auth-email-input">E-mail Address</label>
+                    <input
+                      type="email"
+                      className="form-input"
+                      id="auth-email-input"
+                      placeholder="yourname@domain.com"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group" style={{marginTop: '1rem'}}>
+                    <label htmlFor="auth-password-input">Password</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      id="auth-password-input"
+                      placeholder="••••••••"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary btn-glow" 
+                    style={{width: '100%', justifyContent: 'center', marginTop: '2rem'}}
+                  >
+                    {authMode === 'login' ? 'Proceed to Sign In' : 'Proceed to Sign Up'}
+                  </button>
+                </div>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING INTERACTIVE AI CHATBOT WIDGET (AURABOT) */}
+      <div className="chatbot-float">
+        {!isChatbotOpen ? (
+          <button 
+            onClick={() => setIsChatbotOpen(true)} 
+            className="chatbot-toggle-btn"
+            title="Chat with AuraBot AI Assistant"
+            aria-label="Open chatbot window"
+          >
+            💬
+          </button>
+        ) : (
+          <div className="chatbot-window glass-panel">
+            <div className="chatbot-header">
+              <span className="chatbot-header-title">
+                <span className="chatbot-header-indicator"></span>
+                AuraBot AI DBMS Assistant 🤖
+              </span>
+              <button 
+                onClick={() => setIsChatbotOpen(false)} 
+                className="chatbot-close"
+                title="Close chat"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="chat-messages">
+              {chatbotMessages.map(msg => (
+                <div key={msg.id} className={`chat-message ${msg.sender}`}>
+                  {msg.text}
+                </div>
+              ))}
+            </div>
+
+            <div className="chat-input-area">
+              <input 
+                type="text" 
+                className="chat-input" 
+                placeholder="Ask about Supabase, SQL, prices..." 
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleChatSend(); }}
+              />
+              <button onClick={handleChatSend} className="chat-send-btn">➔</button>
+            </div>
+          </div>
+        )}
+      </div>
 
     </div>
   );

@@ -1,6 +1,6 @@
-# Event Management React App
+# React Starter App
 
-A simple React app scaffolded with Vite.
+A minimal React application set up with Vite.
 
 ## Commands
 

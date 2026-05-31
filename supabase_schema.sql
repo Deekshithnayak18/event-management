@@ -4,10 +4,14 @@
 -- Database: PostgreSQL (via Supabase)
 -- =========================================================================
 
--- 1. DROP EXISTING TABLES IF THEY EXISTS (To prevent conflict during re-runs)
+-- Enable secure cryptographic hashing extension
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 1. DROP EXISTING TABLES IF THEY EXIST (To prevent conflict during re-runs)
 DROP TABLE IF EXISTS inquiries CASCADE;
 DROP TABLE IF EXISTS bookings CASCADE;
 DROP TABLE IF EXISTS services CASCADE;
+DROP TABLE IF EXISTS admins CASCADE;
 
 -- 2. CREATE SERVICES DATABASE TABLE (Dynamic catalog of 18 services)
 CREATE TABLE services (
@@ -45,6 +49,16 @@ CREATE TABLE inquiries (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- 5. CREATE ADMINS DATABASE TABLE (Secure Admin Accounts)
+CREATE TABLE admins (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    phone_number VARCHAR(20) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- =========================================================================
 -- DML DATA SEEDING (Insert the 18 service catalog rows into the database)
 -- =========================================================================
@@ -69,6 +83,40 @@ INSERT INTO services (id, title, category, base_price, pricing_model, descriptio
 ('soundproof', 'Sound Isolation Setup', 'Infrastructure', 900.00, 'flat', 'Sound-dampening panels and blankets to block external noises.', 'Acoustics', FALSE),
 ('pyrotechnics', 'Special Effects & Sparklers', 'AV & Sound', 650.00, 'flat', 'Safe cold sparks, stage bubble machines, and paper confetti blasts.', 'Pyrotechnics', FALSE);
 
+-- Seed default admin with pgcrypto bcrypt hash
+INSERT INTO admins (name, email, phone_number, password_hash)
+VALUES (
+    'System Admin',
+    'dd058288@gmail.com',
+    '6363579209',
+    crypt('Deeku@9686', gen_salt('bf'))
+) ON CONFLICT (email) DO NOTHING;
+
+-- Secure authentication RPC function
+CREATE OR REPLACE FUNCTION verify_admin_login(
+    p_email TEXT,
+    p_phone TEXT,
+    p_password TEXT
+)
+RETURNS TABLE (
+    id UUID,
+    name VARCHAR,
+    email VARCHAR,
+    phone_number VARCHAR
+) 
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT a.id, a.name, a.email, a.phone_number
+    FROM admins a
+    WHERE a.email = p_email 
+      AND a.phone_number = p_phone
+      AND a.password_hash = crypt(p_password, a.password_hash);
+END;
+$$;
+
 -- =========================================================================
 -- DATABASE ACCESS CONTROLS (Row Level Security - RLS Policies)
 -- Configure tables to permit secure public CRUD operations for front-end demo
@@ -78,6 +126,7 @@ INSERT INTO services (id, title, category, base_price, pricing_model, descriptio
 ALTER TABLE services ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inquiries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admins ENABLE ROW LEVEL SECURITY;
 
 -- 1. Policies for 'services' table (Everyone can read, only admin can write)
 CREATE POLICY "Enable read access for all users on services" ON services

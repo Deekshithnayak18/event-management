@@ -3119,6 +3119,22 @@ body, div, header, section, footer, article, table, tr, td, th, input, select, t
   gap: 0.35rem;
 }
 
+.mta-terminal {
+  background: #06050e;
+  border: 1px solid var(--border-glass-active);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  height: 220px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: #a78bfa;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
+}
+
 .db-log-line {
   line-height: 1.4;
   border-left: 2px solid #10b981;
@@ -3328,6 +3344,237 @@ body, div, header, section, footer, article, table, tr, td, th, input, select, t
 
 @media (max-width: 480px) {
   .why-choose-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================================================
+   SECURE ADMIN LOGIN SYSTEM & COUNTDOWN STYLING
+   ========================================================================= */
+
+/* Admin lock navbar button */
+.btn-lock {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(124, 58, 237, 0.2);
+  color: var(--text-primary);
+  background: rgba(124, 58, 237, 0.04);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.btn-lock:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 15px rgba(124, 58, 237, 0.15);
+}
+
+/* Auth card overlay containers */
+.login-overlay {
+  min-height: 80vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1rem;
+  position: relative;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 28rem;
+  padding: 2.5rem;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-glass-active);
+  box-shadow: var(--glow-shadow);
+  animation: loginCardFade 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes loginCardFade {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.login-card-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.login-card-header h2 {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 1.75rem;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(135deg, var(--accent-text), var(--text-primary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.login-card-header p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* Spinner Loader styling */
+.spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* OTP 2FA inputs styling */
+.otp-inputs-row {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+.otp-box-input {
+  width: 3.5rem;
+  height: 3.5rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--accent-text);
+  transition: var(--transition-smooth);
+}
+
+.otp-box-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  background: rgba(124, 58, 237, 0.05);
+  box-shadow: 0 0 12px rgba(124, 58, 237, 0.25);
+}
+
+.theme-mode-light .otp-box-input {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.1);
+  color: #0f172a;
+}
+
+/* Session active / Inactivity toast warnings */
+.toast-alert-inactivity {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid #f43f5e;
+  backdrop-filter: blur(15px);
+  padding: 1rem 1.5rem;
+  border-radius: var(--radius-md);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  animation: toastPopIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  max-width: 22rem;
+  color: #ffffff;
+}
+
+@keyframes toastPopIn {
+  from { transform: translateY(40px) scale(0.9); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.toast-alert-header {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: #f43f5e;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.toast-alert-desc {
+  font-size: 0.75rem;
+  color: #e2e8f0;
+}
+
+/* Countdown bar simulator */
+.toast-countdown-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.toast-countdown-bar {
+  height: 100%;
+  background: #f43f5e;
+  width: 100%;
+  transition: width 1s linear;
+}
+
+/* General responsive dashboard styling */
+.admin-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2.5rem;
+}
+
+.admin-summary-card {
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1px solid var(--border-glass);
+}
+
+.admin-summary-card h4 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.admin-summary-card .value {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 2.2rem;
+  color: #ffffff;
+}
+
+.theme-mode-light .admin-summary-card .value {
+  color: #0f172a;
+}
+
+.admin-summary-card .desc {
+  font-size: 0.75rem;
+  color: var(--accent-text);
+  margin-top: 0.25rem;
+  font-weight: 600;
+}
+
+.admin-interactive-columns {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 2rem;
+}
+
+@media (max-width: 1024px) {
+  .admin-interactive-columns {
     grid-template-columns: 1fr;
   }
 }

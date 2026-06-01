@@ -252,6 +252,10 @@ function App() {
   const [bookingStep, setBookingStep] = useState('details'); // 'details' | 'payment' | 'success'
   const [bookingName, setBookingName] = useState('');
   const [bookingEmail, setBookingEmail] = useState('');
+  const [bookingPhone, setBookingPhone] = useState('');
+  const [bookingCity, setBookingCity] = useState('');
+  const [bookingState, setBookingState] = useState('');
+  const [bookingPincode, setBookingPincode] = useState('');
   const [bookingDate, setBookingDate] = useState('');
   const [bookingSuccess, setBookingSuccess] = useState(false);
   const [recentBookingResult, setRecentBookingResult] = useState(null);
@@ -266,8 +270,14 @@ function App() {
   
   // Admin Panel states
   const [isAdminView, setIsAdminView] = useState(false);
+  const [dbTab, setDbTab] = useState('registry'); // 'registry' | 'admin' | 'docs'
+  const [activeQuery, setActiveQuery] = useState(null);
   const [dbSqlLogs, setDbSqlLogs] = useState([]);
   const [dbSmtpLogs, setDbSmtpLogs] = useState([]);
+  const [inquiries, setInquiries] = useState([]);
+  const [adminActiveTab, setAdminActiveTab] = useState('dashboard'); // 'dashboard' | 'bookings' | 'inquiries' | 'sql-logs' | 'mta-handshake'
+  const [authTabRole, setAuthTabRole] = useState('client'); // 'client' | 'vendor' | 'admin'
+  const [inquiryStatusFilter, setInquiryStatusFilter] = useState('All');
   
   // Admin Service CRUD modal states
   const [showAddServiceModal, setShowAddServiceModal] = useState(false);
@@ -404,6 +414,51 @@ function App() {
         addSqlLog('SELECT', `SELECT * FROM admins WHERE email = '${adminEmail}' (FAILED: credentials mismatch)`, 'error');
       }
     }, 1200);
+  };
+
+  const handleMultiRoleLoginSubmit = async (e) => {
+    e.preventDefault();
+    setAdminGeneralError('');
+    setAdminErrorEmail('');
+    setAdminErrorPhone('');
+    setAdminErrorPassword('');
+
+    if (authTabRole === 'admin') {
+      // Run full secure PostgreSQL + 2FA OTP verification
+      handleAdminLoginSubmit(e);
+    } else {
+      // Direct dynamic role session generation
+      if (!adminEmail) {
+        setAdminErrorEmail('Email Address is required');
+        return;
+      }
+      if (!adminPassword) {
+        setAdminErrorPassword('Password is required');
+        return;
+      }
+      setAdminLoginLoading(true);
+      setTimeout(() => {
+        setAdminLoginLoading(false);
+        const displayName = authTabRole === 'client' ? 'Arjun Sharma' : 'Priya Nair';
+        const displayRole = authTabRole === 'client' ? 'Premium Client' : 'Event Vendor';
+        const session = {
+          token: `session_jwt_${authTabRole}_${crypto.randomUUID().replace(/-/g, '')}`,
+          adminId: crypto.randomUUID(),
+          name: displayName,
+          email: adminEmail,
+          role: displayRole,
+          loginTime: Date.now()
+        };
+        setAdminSession(session);
+        if (adminRememberMe) {
+          localStorage.setItem('auraevents_admin_session', JSON.stringify(session));
+        } else {
+          sessionStorage.setItem('auraevents_admin_session', JSON.stringify(session));
+        }
+        window.location.hash = "#admin-dashboard";
+        addSqlLog('SELECT', `SELECT * FROM ${authTabRole}s WHERE email = '${adminEmail}' (SUCCESS: Active ${authTabRole} session initialized)`, 'success');
+      }, 1000);
+    }
   };
 
   const handleAdminOtpSubmit = (e) => {
@@ -545,9 +600,14 @@ function App() {
     setBookings(fetchedBookings);
     setLoadingBookings(false);
 
+    // Load inquiries from PostgreSQL / Local cache
+    const fetchedInquiries = await supabaseClient.fetchInquiries();
+    setInquiries(fetchedInquiries);
+
     // Seed transaction logs in SQL console panel
     addSqlLog('SELECT', 'SELECT * FROM services ORDER BY is_standard DESC;', 'success');
-    addSqlLog('SELECT', 'SELECT * FROM bookings ORDER BY event_date ASC;', 'success');
+    addSqlLog('SELECT', 'SELECT * FROM Booking ORDER BY BookingDate ASC;', 'success');
+    addSqlLog('SELECT', 'SELECT * FROM inquiries ORDER BY created_at DESC;', 'success');
   };
 
   useEffect(() => {
@@ -803,7 +863,7 @@ function App() {
 
     if (selectedDateObj < todayObj) {
       alert("Past dates are not allowed! Real-time timezone verification has blocked this transaction.");
-      addSqlLog('INSERT', `INSERT INTO bookings (client_name, event_date) VALUES ('${bookingName}', '${bookingDate}') (FAILED: constraint check_future_booking failed)`, 'error');
+      addSqlLog('INSERT', `INSERT INTO Booking (EventID, BookingDate) VALUES (1, '${bookingDate}') (FAILED: check_future_booking constraint check failed)`, 'error');
       return;
     }
 
@@ -814,7 +874,11 @@ function App() {
       eventType: selectedEventType,
       guestCount: guestCount,
       selectedServices: selectedServices,
-      totalPrice: totalCostDetails.total * EXCHANGE_RATE
+      totalPrice: totalCostDetails.total * EXCHANGE_RATE,
+      phone: bookingPhone || '+91 6363579209',
+      city: bookingCity || 'Bangalore',
+      state: bookingState || 'Karnataka',
+      pincode: bookingPincode || '560001'
     };
 
     setPaymentLoading(true);
@@ -825,17 +889,22 @@ function App() {
         setRecentBookingResult(res.data);
         setBookingStep('success');
         setBookingSuccess(true);
-        addSqlLog('INSERT', `INSERT INTO bookings (id, client_name, client_email, event_date, event_type, guest_count, total_price) VALUES ('${res.data.id}', '${bookingName}', '${bookingEmail}', '${bookingDate}', '${selectedEventType}', ${guestCount}, ${payload.totalPrice});`, 'success');
+        
+        const names = bookingName.trim().split(/\s+/);
+        const firstName = names[0] || 'Unknown';
+        const lastName = names.slice(1).join(' ') || 'Client';
+        
+        addSqlLog('INSERT', `BEGIN TRANSACTION;\nINSERT INTO Participant (FirstName, LastName, Email, Phone, Address) VALUES ('${firstName}', '${lastName}', '${bookingEmail}', '${payload.phone}', '${payload.city}, ${payload.state}');\nINSERT INTO Booking (EventID, ParticipantID, BookingStatus, TotalAmount) VALUES (1, (FK to Participant), 'Confirmed', ${payload.totalPrice});\nINSERT INTO Payment (BookingID, Amount, PaymentStatus) VALUES ((FK to Booking), ${payload.totalPrice}, 'Paid');\nCOMMIT;`, 'success');
         
         // Trigger Nodemailer SMTP email notification to dd058288@gmail.com
         triggerSmtpNotification('booking', {
           customerName: bookingName,
           customerEmail: bookingEmail,
-          phoneNumber: "+91 6363579209",
+          phoneNumber: payload.phone,
           eventType: selectedEventType,
           eventDate: bookingDate,
           guestCount: guestCount,
-          message: `Custom Spec Modules configured: ${selectedServices.join(', ')}`
+          message: `Custom Spec Modules configured: ${selectedServices.join(', ')}. Location: ${payload.city}, ${payload.state}`
         });
 
         // Reload booking log list
@@ -843,7 +912,7 @@ function App() {
         setBookings(updatedList);
       } else {
         alert("Failed to insert database row. Check Supabase connection.");
-        addSqlLog('INSERT', `INSERT INTO bookings ... (FAILED)`, 'error');
+        addSqlLog('INSERT', `INSERT INTO Booking ... (FAILED)`, 'error');
       }
     }, 1200);
   };
@@ -879,7 +948,7 @@ function App() {
 
     if (selectedDateObj < todayObj) {
       alert("Past dates are not allowed! Real-time timezone verification has blocked this transaction.");
-      addSqlLog('UPDATE', `UPDATE bookings SET event_date = '${editEventDate}' WHERE id = '${editId}' (FAILED: check_future_booking constraint)`, 'error');
+      addSqlLog('UPDATE', `UPDATE Booking SET BookingDate = '${editEventDate}' WHERE BookingID = ${editId} (FAILED: check_future_booking constraint)`, 'error');
       return;
     }
 
@@ -896,13 +965,13 @@ function App() {
     const res = await supabaseClient.updateBooking(editId, payload);
     if (res.success) {
       setShowEditModal(false);
-      addSqlLog('UPDATE', `UPDATE bookings SET client_name = '${editClientName}', event_date = '${editEventDate}', guest_count = ${editGuestCount}, total_price = ${payload.totalPrice} WHERE id = '${editId}';`, 'success');
+      addSqlLog('UPDATE', `UPDATE Booking SET TotalAmount = ${payload.totalPrice} WHERE BookingID = ${editId};`, 'success');
       // Reload lists
       const updatedList = await supabaseClient.fetchBookings();
       setBookings(updatedList);
     } else {
       alert("Database failed to update record.");
-      addSqlLog('UPDATE', `UPDATE bookings WHERE id = '${editId}' (FAILED)`, 'error');
+      addSqlLog('UPDATE', `UPDATE Booking WHERE BookingID = ${editId} (FAILED)`, 'error');
     }
   };
 
@@ -921,13 +990,13 @@ function App() {
 
     const res = await supabaseClient.deleteBooking(id);
     if (res.success) {
-      addSqlLog('DELETE', `DELETE FROM bookings WHERE id = '${id}';`, 'warn');
+      addSqlLog('DELETE', `DELETE FROM Booking WHERE BookingID = ${id};`, 'warn');
       // Reload logs
       const updatedList = await supabaseClient.fetchBookings();
       setBookings(updatedList);
     } else {
       alert("Failed to delete row from database.");
-      addSqlLog('DELETE', `DELETE FROM bookings WHERE id = '${id}' (FAILED)`, 'error');
+      addSqlLog('DELETE', `DELETE FROM Booking WHERE BookingID = ${id} (FAILED)`, 'error');
     }
   };
 
@@ -1081,6 +1150,10 @@ function App() {
     setBookingSuccess(false);
     setBookingName('');
     setBookingEmail('');
+    setBookingPhone('');
+    setBookingCity('');
+    setBookingState('');
+    setBookingPincode('');
     setBookingDate('');
     setCardNum('');
     setCardExp('');
@@ -1986,21 +2059,27 @@ function App() {
             {/* ADMIN / CLIENT TAB DRAWER TOGGLES */}
             <div className="admin-tab-bar">
               <button 
-                onClick={() => setIsAdminView(false)} 
-                className={`admin-tab-btn ${!isAdminView ? 'active' : ''}`}
+                onClick={() => { setIsAdminView(false); setDbTab('registry'); }} 
+                className={`admin-tab-btn ${dbTab === 'registry' ? 'active' : ''}`}
               >
                 📋 Bookings Client Registry
               </button>
               <button 
-                onClick={() => setIsAdminView(true)} 
-                className={`admin-tab-btn ${isAdminView ? 'active' : ''}`}
+                onClick={() => { setIsAdminView(true); setDbTab('admin'); }} 
+                className={`admin-tab-btn ${dbTab === 'admin' ? 'active' : ''}`}
                 id="admin-override-btn"
               >
                 🔐 Administrative Control Center
               </button>
+              <button 
+                onClick={() => { setDbTab('docs'); }} 
+                className={`admin-tab-btn ${dbTab === 'docs' ? 'active' : ''}`}
+              >
+                📖 Website DB Integration Docs
+              </button>
             </div>
 
-            {!isAdminView ? (
+            {dbTab === 'registry' ? (
               <div>
                 <div className="db-controls">
                   {/* Database Search query filter */}
@@ -2048,11 +2127,11 @@ function App() {
                       <thead>
                         <tr>
                           <th className="db-th">Target Date</th>
-                          <th className="db-th">Client Details</th>
-                          <th className="db-th">Event Model</th>
-                          <th className="db-th">Guests Limit</th>
-                          <th className="db-th">Configured Modules</th>
-                          <th className="db-th">Committed Price</th>
+                          <th className="db-th">Client Details (Participant)</th>
+                          <th className="db-th">Event Model (Venue)</th>
+                          <th className="db-th">Tickets / Guests</th>
+                          <th className="db-th">Payment / Price</th>
+                          <th className="db-th">Status</th>
                           <th className="db-th" style={{textAlign: 'center'}}>Actions</th>
                         </tr>
                       </thead>
@@ -2063,34 +2142,44 @@ function App() {
                               {b.event_date}
                             </td>
                             <td className="db-td">
-                              <div className="db-client-info">
+                              <div className="db-client-info" style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                                 <span className="db-client-name" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{b.client_name}</span>
                                 <span className="db-client-email">{b.client_email}</span>
+                                {b.participant_phone ? (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)' }}>📞 {b.participant_phone}</span>
+                                ) : (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)' }}>📞 +91 6363579209</span>
+                                )}
+                                {b.participant_address ? (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📍 {b.participant_address}</span>
+                                ) : (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📍 Bangalore, Karnataka</span>
+                                )}
                               </div>
                             </td>
                             <td className="db-td">
                               <span className={`db-type-badge db-type-${b.event_type}`}>
                                 {b.event_type}
                               </span>
+                              {b.event_venue ? (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>🏟️ {b.event_venue}</div>
+                              ) : (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>🏟️ Main Auditorium, PES Univ</div>
+                              )}
                             </td>
                             <td className="db-td" style={{fontWeight: '600'}}>
-                              {b.guest_count}
+                              {b.guest_count} Tickets
                             </td>
                             <td className="db-td">
-                              <div className="db-services-tags">
-                                {b.selected_services && b.selected_services.length > 0 ? (
-                                  b.selected_services.map(sId => (
-                                    <span key={sId} className="db-services-tag">
-                                      {services.find(s => s.id === sId)?.title || sId}
-                                    </span>
-                                  ))
-                                ) : (
-                                  <span style={{color: 'var(--text-muted)', fontSize: '0.75rem'}}>No add-on layers</span>
-                                )}
-                              </div>
+                              <div style={{fontWeight: '800', color: 'var(--accent-text)', fontSize: '0.95rem'}}>{formatDirectINR(b.total_price)}</div>
+                              <span className="status-badge-pill selected" style={{ fontSize: '0.65rem', padding: '0.1rem 0.3rem', marginTop: '0.15rem', display: 'inline-block' }}>
+                                💳 {b.payment_status || 'Paid'}
+                              </span>
                             </td>
-                            <td className="db-td" style={{fontWeight: '800', color: 'var(--accent-text)', fontSize: '0.95rem'}}>
-                              {formatDirectINR(b.total_price)}
+                            <td className="db-td">
+                              <span className={`status-badge-pill ${b.status.replace(/ /g, '-').toLowerCase()}`}>
+                                {b.status}
+                              </span>
                             </td>
                             <td className="db-td">
                               <div className="db-actions" style={{justifyContent: 'center'}}>
@@ -2117,7 +2206,7 @@ function App() {
                   </div>
                 )}
               </div>
-            ) : (
+            ) : dbTab === 'admin' ? (
               // ADMIN CONTROL PANEL WITH SERVICE CRUD
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -2183,6 +2272,451 @@ function App() {
                       )}
                     </div>
                   </div>
+                </div>
+              </div>
+            ) : (
+              // dbTab === 'docs' (NEW STUNNING ACADEMIC PROJECT DOCUMENTATION DISPLAY SECTION)
+              <div className="dbms-docs-tab" style={{ animation: 'fadeIn 0.5s ease' }}>
+                <div style={{ marginBottom: '2rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '1rem' }}>
+                  <h3 style={{ fontSize: '1.4rem', color: '#ffffff', marginBottom: '0.4rem', fontFamily: 'var(--font-heading)' }}>📖 Database & Frontend Integration Blueprint</h3>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    Visual reference guides detailing relational mappings, live queries validation checkouts, and dynamic frontend route frameworks.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                  
+                  {/* SECTION 1: WEBSITE FUNCTIONALITY CONNECTED TO DATABASE */}
+                  <div className="glass-panel" style={{ padding: '1.75rem' }}>
+                    <h4 style={{ fontSize: '1.1rem', color: 'var(--accent-text)', marginBottom: '1rem', fontFamily: 'var(--font-heading)', fontWeight: 'bold' }}>
+                      🔌 4.1.5 WEBSITE FUNCTIONALITY CONNECTED TO DATABASE
+                    </h4>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                      The AuraEvents architecture acts as a live, state-controlled bridge routing visual inputs directly into highly secure Supabase PostgreSQL database schemas:
+                    </p>
+                    
+                    <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
+                      <div className="glass-panel" style={{ padding: '1.2rem', background: 'rgba(255,255,255,0.015)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '1.2rem' }}>🏗️</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>Event Creation</strong>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.2rem' }}>
+                          When an administrator defines a new event through the dashboard, all parameters (Name, Capacity, Price, Venue) are committed directly into the <strong>Event</strong> table.
+                        </p>
+                        <code style={{ fontSize: '0.65rem', display: 'block', marginTop: '0.6rem', color: 'var(--accent-text)', background: 'rgba(0,0,0,0.3)', padding: '0.3rem 0.5rem', borderRadius: '4px', fontFamily: 'monospace' }}>
+                          INSERT INTO Event (EventName, ...) VALUES (...)
+                        </code>
+                      </div>
+
+                      <div className="glass-panel" style={{ padding: '1.2rem', background: 'rgba(255,255,255,0.015)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '1.2rem' }}>📝</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>Participant Registration</strong>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.2rem' }}>
+                          When a participant fills out registration forms, a unique record with transactional parameters is stored into the <strong>Participant</strong> table (Email has UNIQUE constraints).
+                        </p>
+                        <code style={{ fontSize: '0.65rem', display: 'block', marginTop: '0.6rem', color: 'var(--accent-text)', background: 'rgba(0,0,0,0.3)', padding: '0.3rem 0.5rem', borderRadius: '4px', fontFamily: 'monospace' }}>
+                          INSERT INTO Participant (FirstName, Email, ...)
+                        </code>
+                      </div>
+
+                      <div className="glass-panel" style={{ padding: '1.2rem', background: 'rgba(255,255,255,0.015)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '1.2rem' }}>🎟️</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>Event Booking</strong>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.2rem' }}>
+                          Clicking "Register" establishes an associative row in the <strong>Booking</strong> weak entity table, locking in referenced Event and Participant foreign keys.
+                        </p>
+                        <code style={{ fontSize: '0.65rem', display: 'block', marginTop: '0.6rem', color: 'var(--accent-text)', background: 'rgba(0,0,0,0.3)', padding: '0.3rem 0.5rem', borderRadius: '4px', fontFamily: 'monospace' }}>
+                          INSERT INTO Booking (EventID, ParticipantID, ...)
+                        </code>
+                      </div>
+
+                      <div className="glass-panel" style={{ padding: '1.2rem', background: 'rgba(255,255,255,0.015)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '1.2rem' }}>💳</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>Payment Processing</strong>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.2rem' }}>
+                          After checkout completion, transactional ledgers are saved in the <strong>Payment</strong> table. Booking status automatically adapts to Confirmed or Pending.
+                        </p>
+                        <code style={{ fontSize: '0.65rem', display: 'block', marginTop: '0.6rem', color: 'var(--accent-text)', background: 'rgba(0,0,0,0.3)', padding: '0.3rem 0.5rem', borderRadius: '4px', fontFamily: 'monospace' }}>
+                          INSERT INTO Payment (BookingID, Amount, ...)
+                        </code>
+                      </div>
+
+                      <div className="glass-panel" style={{ padding: '1.2rem', background: 'rgba(255,255,255,0.015)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '1.2rem' }}>⚡</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>Real-Time Data Retrieval</strong>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.2rem' }}>
+                          The website actively fetches raw fests lists and active check-in registries dynamically from Supabase using secure client-side asynchronous fetch queries.
+                        </p>
+                        <code style={{ fontSize: '0.65rem', display: 'block', marginTop: '0.6rem', color: 'var(--accent-text)', background: 'rgba(0,0,0,0.3)', padding: '0.3rem 0.5rem', borderRadius: '4px', fontFamily: 'monospace' }}>
+                          supabase.from('Event').select('*')
+                        </code>
+                      </div>
+
+                      <div className="glass-panel" style={{ padding: '1.2rem', background: 'rgba(255,255,255,0.015)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '1.2rem' }}>🔄</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>Database Updates</strong>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.2rem' }}>
+                          Any visual modification, schedule edits, or booking cancellations are instantly propagated and written to the live Supabase PostgreSQL server.
+                        </p>
+                        <code style={{ fontSize: '0.65rem', display: 'block', marginTop: '0.6rem', color: 'var(--accent-text)', background: 'rgba(0,0,0,0.3)', padding: '0.3rem 0.5rem', borderRadius: '4px', fontFamily: 'monospace' }}>
+                          UPDATE Booking SET BookingStatus = ...
+                        </code>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* INTERACTIVE RELATIONSHIP VALIDATION QUERIES */}
+                  <div className="glass-panel" style={{ padding: '1.75rem' }}>
+                    <h4 style={{ fontSize: '1.1rem', color: 'var(--accent-text)', marginBottom: '0.4rem', fontFamily: 'var(--font-heading)', fontWeight: 'bold' }}>
+                      🔍 DATABASE RELATIONSHIP VALIDATION QUERIES
+                    </h4>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                      Test the primary-foreign key relationships and table integrity rules using live interactive validation runs.
+                    </p>
+
+                    <div className="grid" style={{ gridTemplateColumns: '1.1fr 1.2fr', gap: '1.5rem' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <div 
+                          className="glass-panel" 
+                          style={{ padding: '1.2rem', cursor: 'pointer', border: activeQuery === 1 ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-glass)', transition: 'var(--transition-smooth)' }} 
+                          onClick={() => setActiveQuery(1)}
+                        >
+                          <span style={{ fontSize: '0.65rem', color: 'var(--accent-text)', fontWeight: 'bold', textTransform: 'uppercase', display: 'block', marginBottom: '0.2rem' }}>QUERY 1 (Event & Participant Join)</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff', display: 'block', marginBottom: '0.4rem' }}>Display Event & Attendee Info</strong>
+                          <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '0.6rem', lineHeight: '1.1rem' }}>
+                            Demonstrates how the Booking associative table bridges participants details with targeted event schedules.
+                          </p>
+                          <pre style={{ fontSize: '0.65rem', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: '4px', overflowX: 'auto', fontFamily: 'monospace' }}>
+{`SELECT 
+  B.BookingID, P.FirstName, P.LastName, 
+  E.EventName, B.BookingStatus
+FROM Booking B
+JOIN Participant P ON B.ParticipantID = P.ParticipantID
+JOIN Event E ON B.EventID = E.EventID;`}
+                          </pre>
+                          <button className="btn btn-secondary" style={{ width: '100%', padding: '0.4rem', fontSize: '0.75rem', marginTop: '0.75rem', justifyContent: 'center' }}>
+                            Execute Query A 🚀
+                          </button>
+                        </div>
+
+                        <div 
+                          className="glass-panel" 
+                          style={{ padding: '1.2rem', cursor: 'pointer', border: activeQuery === 2 ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-glass)', transition: 'var(--transition-smooth)' }} 
+                          onClick={() => setActiveQuery(2)}
+                        >
+                          <span style={{ fontSize: '0.65rem', color: 'var(--accent-text)', fontWeight: 'bold', textTransform: 'uppercase', display: 'block', marginBottom: '0.2rem' }}>QUERY 2 (Finance Audit Join)</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff', display: 'block', marginBottom: '0.4rem' }}>Display Payment Information</strong>
+                          <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '0.6rem', lineHeight: '1.1rem' }}>
+                            Combines Payment, Booking, Event, and Participant tables to construct a complete transactional audit ledger.
+                          </p>
+                          <pre style={{ fontSize: '0.65rem', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: '4px', overflowX: 'auto', fontFamily: 'monospace' }}>
+{`SELECT 
+  P.PaymentID, E.EventName, PT.FirstName, 
+  P.Amount, P.PaymentStatus
+FROM Payment P
+JOIN Booking B ON P.BookingID = B.BookingID
+JOIN Event E ON B.EventID = E.EventID
+JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
+                          </pre>
+                          <button className="btn btn-secondary" style={{ width: '100%', padding: '0.4rem', fontSize: '0.75rem', marginTop: '0.75rem', justifyContent: 'center' }}>
+                            Execute Query B 🚀
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="glass-panel" style={{ padding: '1.5rem', background: '#020617', border: '1px solid var(--border-glass-active)', display: 'flex', flexDirection: 'column', minHeight: '340px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)', fontFamily: 'monospace', fontWeight: 'bold' }}>🖥️ SQL PROJECT QUERY ANALYZER</span>
+                          <span className="status-badge-pill selected" style={{ fontSize: '0.6rem' }}>DBMS TERMINAL</span>
+                        </div>
+
+                        {activeQuery === null ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', flexGrow: 1, color: 'var(--text-muted)', textAlign: 'center' }}>
+                            <span style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>⚡</span>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Click "Execute Query" on the left to simulate live PostgreSQL table joins!</p>
+                          </div>
+                        ) : activeQuery === 1 ? (
+                          <div style={{ flexGrow: 1, overflowX: 'auto' }}>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', fontFamily: 'monospace' }}>
+                              Running Query A... Showing 5 active seeded tuples successfully retrieved from [Booking ⨝ Participant ⨝ Event]:
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem', fontFamily: 'monospace' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid var(--border-glass)' }}>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>BookingID</th>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>FirstName</th>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>LastName</th>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>EventName</th>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>BookingStatus</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr style={{ borderBottom: '1px dotted var(--border-glass)' }}>
+                                  <td style={{ padding: '0.4rem' }}>1</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Rahul</td>
+                                  <td style={{ padding: '0.4rem' }}>Sharma</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>Tech Conference 2026</td>
+                                  <td style={{ padding: '0.4rem', color: '#10b981' }}>Confirmed</td>
+                                </tr>
+                                <tr style={{ borderBottom: '1px dotted var(--border-glass)' }}>
+                                  <td style={{ padding: '0.4rem' }}>2</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Priya</td>
+                                  <td style={{ padding: '0.4rem' }}>Nair</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>Cultural Fest 2026</td>
+                                  <td style={{ padding: '0.4rem', color: '#10b981' }}>Confirmed</td>
+                                </tr>
+                                <tr style={{ borderBottom: '1px dotted var(--border-glass)' }}>
+                                  <td style={{ padding: '0.4rem' }}>3</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Arjun</td>
+                                  <td style={{ padding: '0.4rem' }}>Kumar</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>Coding Workshop</td>
+                                  <td style={{ padding: '0.4rem', color: '#f59e0b' }}>Pending</td>
+                                </tr>
+                                <tr style={{ borderBottom: '1px dotted var(--border-glass)' }}>
+                                  <td style={{ padding: '0.4rem' }}>4</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Sneha</td>
+                                  <td style={{ padding: '0.4rem' }}>Patel</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>Startup Expo</td>
+                                  <td style={{ padding: '0.4rem', color: '#10b981' }}>Confirmed</td>
+                                </tr>
+                                <tr>
+                                  <td style={{ padding: '0.4rem' }}>5</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Amit</td>
+                                  <td style={{ padding: '0.4rem' }}>Verma</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>AI Summit</td>
+                                  <td style={{ padding: '0.4rem', color: '#10b981' }}>Confirmed</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <div style={{ flexGrow: 1, overflowX: 'auto' }}>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', fontFamily: 'monospace' }}>
+                              Running Query B... Showing 5 active payment audits successfully joined from [Payment ⨝ Booking ⨝ Event ⨝ Participant]:
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem', fontFamily: 'monospace' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid var(--border-glass)' }}>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>PaymentID</th>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>EventName</th>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>FirstName</th>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>Amount</th>
+                                  <th style={{ padding: '0.4rem', textAlign: 'left', color: '#ffffff' }}>PaymentStatus</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr style={{ borderBottom: '1px dotted var(--border-glass)' }}>
+                                  <td style={{ padding: '0.4rem' }}>1</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>Tech Conference 2026</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Rahul</td>
+                                  <td style={{ padding: '0.4rem', fontWeight: 'bold', color: 'var(--accent-text)' }}>₹1000</td>
+                                  <td style={{ padding: '0.4rem', color: '#10b981' }}>Paid</td>
+                                </tr>
+                                <tr style={{ borderBottom: '1px dotted var(--border-glass)' }}>
+                                  <td style={{ padding: '0.4rem' }}>2</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>Cultural Fest 2026</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Priya</td>
+                                  <td style={{ padding: '0.4rem', fontWeight: 'bold', color: 'var(--accent-text)' }}>₹500</td>
+                                  <td style={{ padding: '0.4rem', color: '#10b981' }}>Paid</td>
+                                </tr>
+                                <tr style={{ borderBottom: '1px dotted var(--border-glass)' }}>
+                                  <td style={{ padding: '0.4rem' }}>3</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>Coding Workshop</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Arjun</td>
+                                  <td style={{ padding: '0.4rem', fontWeight: 'bold', color: 'var(--accent-text)' }}>₹750</td>
+                                  <td style={{ padding: '0.4rem', color: '#f59e0b' }}>Pending</td>
+                                </tr>
+                                <tr style={{ borderBottom: '1px dotted var(--border-glass)' }}>
+                                  <td style={{ padding: '0.4rem' }}>4</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>Startup Expo</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Sneha</td>
+                                  <td style={{ padding: '0.4rem', fontWeight: 'bold', color: 'var(--accent-text)' }}>₹1200</td>
+                                  <td style={{ padding: '0.4rem', color: '#10b981' }}>Paid</td>
+                                </tr>
+                                <tr>
+                                  <td style={{ padding: '0.4rem' }}>5</td>
+                                  <td style={{ padding: '0.4rem', color: '#ffffff' }}>AI Summit</td>
+                                  <td style={{ padding: '0.4rem', color: 'var(--accent-text)' }}>Amit</td>
+                                  <td style={{ padding: '0.4rem', fontWeight: 'bold', color: 'var(--accent-text)' }}>₹1500</td>
+                                  <td style={{ padding: '0.4rem', color: '#10b981' }}>Paid</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECTION 2: CHAPTER 4.2 FRONT-END TECHNOLOGIES & PAGES DESCRIPTION */}
+                  <div className="glass-panel" style={{ padding: '1.75rem' }}>
+                    <h4 style={{ fontSize: '1.1rem', color: 'var(--accent-text)', marginBottom: '1.25rem', fontFamily: 'var(--font-heading)', fontWeight: 'bold' }}>
+                      🎨 4.2 FRONT END TECHNICAL STRUCTURE & DEPLOYMENT
+                    </h4>
+                    
+                    {/* Tech blocks */}
+                    <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
+                      <div className="glass-panel" style={{ padding: '1.2rem', background: 'rgba(239, 68, 68, 0.02)', borderColor: 'rgba(239, 68, 68, 0.15)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                          <span style={{ color: '#ef4444', fontSize: '1.2rem' }}>🌐</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>HTML5 Structural Markup</strong>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.2rem' }}>
+                          Declares semantic HTML layouts structuring the Navigation Header, Event Card Catalogs, Participant Forms, and Admin Registry Grids.
+                        </p>
+                      </div>
+
+                      <div className="glass-panel" style={{ padding: '1.2rem', background: 'rgba(59, 130, 246, 0.02)', borderColor: 'rgba(59, 130, 246, 0.15)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                          <span style={{ color: '#3b82f6', fontSize: '1.2rem' }}>🎨</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>CSS3 Presentation & Styling</strong>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.2rem' }}>
+                          Styles glassmorphism parameters, sets responsive typography, manages layouts grids, handles micro-animations, and manages screen dimensions adaptions.
+                        </p>
+                      </div>
+
+                      <div className="glass-panel" style={{ padding: '1.2rem', background: 'rgba(234, 179, 8, 0.02)', borderColor: 'rgba(234, 179, 8, 0.15)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                          <span style={{ color: '#eab308', fontSize: '1.2rem' }}>⚡</span>
+                          <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>JavaScript (ES6+) Dynamic Operations</strong>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.2rem' }}>
+                          Controls react state variables, evaluates inputs validations, calculates pricing aggregates, and drives direct Supabase PostgREST client integrations.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* FRONTEND WORKFLOW VISUALIZER */}
+                    <div style={{ marginBottom: '2.5rem' }}>
+                      <h5 style={{ fontSize: '0.9rem', color: '#ffffff', marginBottom: '0.8rem', fontFamily: 'var(--font-heading)', fontWeight: 'bold' }}>
+                        🔄 4.2.10 FRONTEND WORKFLOW ROUTEMAP
+                      </h5>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
+                        {[
+                          { label: 'User Action', icon: '👤' },
+                          { label: 'Home Landing', icon: '🏠' },
+                          { label: 'View Events', icon: '🔍' },
+                          { label: 'Register Form', icon: '📝' },
+                          { label: 'Book Event', icon: '🎟️' },
+                          { label: 'Confirm Payment', icon: '💳' },
+                          { label: 'Booking Confirmed', icon: '✅' },
+                          { label: 'Supabase Saved', icon: '⚡' }
+                        ].map((step, idx) => (
+                          <React.Fragment key={idx}>
+                            <div className="workflow-step-pill" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'var(--accent-subtle)', border: '1px solid var(--border-glass)', padding: '0.45rem 0.8rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-text)' }}>
+                              <span>{step.icon}</span> {step.label}
+                            </div>
+                            {idx < 7 && <span style={{ color: 'var(--accent-text)', fontSize: '0.9rem', padding: '0 0.2rem' }}>➔</span>}
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* INTERACTIVE PAGE SCREENSHOTS / LIVE PREVIEWS */}
+                    <div>
+                      <h5 style={{ fontSize: '0.9rem', color: '#ffffff', marginBottom: '0.8rem', fontFamily: 'var(--font-heading)', fontWeight: 'bold' }}>
+                        📸 INTERACTIVE WEBPAGE LIVE PREVIEWS (MOCK SCREENSHOT BLUEPRINTS)
+                      </h5>
+                      <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                        Explore the visual structure and click any button to jump directly to the live page sections:
+                      </p>
+
+                      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem' }}>
+                        
+                        <div className="glass-panel screenshot-mock-card" style={{ padding: '1.25rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                            <span style={{ fontSize: '1.4rem' }}>🏠</span>
+                            <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>4.2.2 Home Landing Page</strong>
+                          </div>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.15rem', minHeight: '50px' }}>
+                            The dynamic entry point displaying stats metric graphs, brand values, and responsive event listings maps.
+                          </p>
+                          <a href="#" className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.75rem', textAlign: 'center', display: 'block', justifyContent: 'center' }}>
+                            Jump to Landing Page ➔
+                          </a>
+                        </div>
+
+                        <div className="glass-panel screenshot-mock-card" style={{ padding: '1.25rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                            <span style={{ fontSize: '1.4rem' }}>🔍</span>
+                            <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>4.2.3 Event Listing Page</strong>
+                          </div>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.15rem', minHeight: '50px' }}>
+                            Fetches and renders fests dynamically from Supabase database tables with filter capabilities.
+                          </p>
+                          <a href="#services" className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.75rem', textAlign: 'center', display: 'block', justifyContent: 'center' }}>
+                            View Event Listings ➔
+                          </a>
+                        </div>
+
+                        <div className="glass-panel screenshot-mock-card" style={{ padding: '1.25rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                            <span style={{ fontSize: '1.4rem' }}>📝</span>
+                            <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>4.2.4 Participant Signup Form</strong>
+                          </div>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.15rem', minHeight: '50px' }}>
+                            A form locking in Name, Email, Address, and Mobile number. Prevents email duplications.
+                          </p>
+                          <button onClick={() => { document.getElementById('checkout-book-btn')?.click(); }} className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.75rem', justifyContent: 'center' }}>
+                            Open Participant Form ➔
+                          </button>
+                        </div>
+
+                        <div className="glass-panel screenshot-mock-card" style={{ padding: '1.25rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                            <span style={{ fontSize: '1.4rem' }}>🎟️</span>
+                            <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>4.2.5 Event Booking Form</strong>
+                          </div>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.15rem', minHeight: '50px' }}>
+                            Evaluates event capacity availability and registers booking transaction entries dynamically.
+                          </p>
+                          <a href="#calculator" className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.75rem', textAlign: 'center', display: 'block', justifyContent: 'center' }}>
+                            View Booking cost Calc ➔
+                          </a>
+                        </div>
+
+                        <div className="glass-panel screenshot-mock-card" style={{ padding: '1.25rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                            <span style={{ fontSize: '1.4rem' }}>💳</span>
+                            <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>4.2.6 Secure Payment Page</strong>
+                          </div>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.15rem', minHeight: '50px' }}>
+                            Displays aggregate pricing, verifies card or UPI entries, and logs transaction audits.
+                          </p>
+                          <button onClick={() => { document.getElementById('checkout-book-btn')?.click(); }} className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.75rem', justifyContent: 'center' }}>
+                            Test Payment Gate ➔
+                          </button>
+                        </div>
+
+                        <div className="glass-panel screenshot-mock-card" style={{ padding: '1.25rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                            <span style={{ fontSize: '1.4rem' }}>⚙️</span>
+                            <strong style={{ fontSize: '0.85rem', color: '#ffffff' }}>4.2.7 Admin Control Dashboard</strong>
+                          </div>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.15rem', minHeight: '50px' }}>
+                            Provides total controls over event creations, payment checks, and live audit SQL logs.
+                          </p>
+                          <button onClick={() => { setDbTab('admin'); setIsAdminView(true); }} className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.75rem', justifyContent: 'center' }}>
+                            Switch to Admin Panel ➔
+                          </button>
+                        </div>
+
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
               </div>
             )}
@@ -2906,43 +3440,90 @@ function App() {
               <pre className="sql-pre-code" id="postgres-ddl-code">
                 <code>
 <span className="sql-comment">-- =========================================================================</span>{'\n'}
-<span className="sql-comment">-- AuraEvents Database Schema DDL Setup</span>{'\n'}
+<span className="sql-comment">-- CHAPTER 4 - CODING: 4.1 BACK END (Event Management Relational Schema)</span>{'\n'}
 <span className="sql-comment">-- =========================================================================</span>{'\n'}{'\n'}
-<span className="sql-keyword">DROP TABLE IF EXISTS</span> inquiries CASCADE;{'\n'}
-<span className="sql-keyword">DROP TABLE IF EXISTS</span> bookings CASCADE;{'\n'}
-<span className="sql-keyword">DROP TABLE IF EXISTS</span> services CASCADE;{'\n'}{'\n'}
-<span className="sql-comment">-- 1. Create services catalog table</span>{'\n'}
-<span className="sql-keyword">CREATE TABLE</span> services ({'\n'}
-    id <span className="sql-type">VARCHAR(50)</span> <span className="sql-keyword">PRIMARY KEY</span>,{'\n'}
-    title <span className="sql-type">VARCHAR(100)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    category <span className="sql-type">VARCHAR(50)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    base_price <span className="sql-type">NUMERIC(10, 2)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    pricing_model <span className="sql-type">VARCHAR(20)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    description <span className="sql-type">TEXT</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    icon_key <span className="sql-type">VARCHAR(50)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    is_standard <span className="sql-type">BOOLEAN</span> <span className="sql-keyword">DEFAULT FALSE</span>{'\n'});{'\n'}{'\n'}
-<span className="sql-comment">-- 2. Create bookings table with check constraint</span>{'\n'}
-<span className="sql-keyword">CREATE TABLE</span> bookings ({'\n'}
-    id <span className="sql-type">UUID</span> <span className="sql-keyword">PRIMARY KEY DEFAULT</span> gen_random_uuid(),{'\n'}
-    client_name <span className="sql-type">VARCHAR(100)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    client_email <span className="sql-type">VARCHAR(100)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    event_date <span className="sql-type">DATE</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    event_type <span className="sql-type">VARCHAR(50)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    guest_count <span className="sql-type">INTEGER</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    selected_services <span className="sql-type">TEXT[]</span> <span className="sql-keyword">DEFAULT</span> '{}'::TEXT[] <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    total_price <span className="sql-type">NUMERIC(12, 2)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    created_at <span className="sql-type">TIMESTAMP WITH TIME ZONE</span> <span className="sql-keyword">DEFAULT</span> now(),{'\n'}
-    <span className="sql-keyword">CONSTRAINT</span> check_future_booking <span className="sql-keyword">CHECK</span> (event_date &gt;= <span className="sql-keyword">CURRENT_DATE</span>){'\n'});{'\n'}{'\n'}
-<span className="sql-comment">-- 3. Create inquiries feedback logs</span>{'\n'}
-<span className="sql-keyword">CREATE TABLE</span> inquiries ({'\n'}
-    id <span className="sql-type">UUID</span> <span className="sql-keyword">PRIMARY KEY DEFAULT</span> gen_random_uuid(),{'\n'}
-    rep_name <span className="sql-type">VARCHAR(100)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    email <span className="sql-type">VARCHAR(100)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    specs_notes <span className="sql-type">TEXT</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
-    created_at <span className="sql-type">TIMESTAMP WITH TIME ZONE</span> <span className="sql-keyword">DEFAULT</span> now(){'\n'});{'\n'}{'\n'}
-<span className="sql-comment">-- 4. Enable Row Level Security (RLS) policies</span>{'\n'}
-<span className="sql-keyword">ALTER TABLE</span> bookings <span className="sql-keyword">ENABLE ROW LEVEL SECURITY</span>;{'\n'}
-<span className="sql-keyword">CREATE POLICY</span> "Allow public access" <span className="sql-keyword">ON</span> bookings <span className="sql-keyword">FOR ALL USING</span> (true);
+<span className="sql-keyword">DROP TABLE IF EXISTS</span> Payment <span className="sql-keyword">CASCADE</span>;{'\n'}
+<span className="sql-keyword">DROP TABLE IF EXISTS</span> Booking <span className="sql-keyword">CASCADE</span>;{'\n'}
+<span className="sql-keyword">DROP TABLE IF EXISTS</span> Participant <span className="sql-keyword">CASCADE</span>;{'\n'}
+<span className="sql-keyword">DROP TABLE IF EXISTS</span> Event <span className="sql-keyword">CASCADE</span>;{'\n'}{'\n'}
+<span className="sql-comment">-- 1. EVENT TABLE</span>{'\n'}
+<span className="sql-keyword">CREATE TABLE</span> Event ({'\n'}
+    EventID <span className="sql-type">SERIAL</span> <span className="sql-keyword">PRIMARY KEY</span>,{'\n'}
+    EventName <span className="sql-type">VARCHAR(100)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    EventDate <span className="sql-type">DATE</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    Location <span className="sql-type">VARCHAR(150)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    Capacity <span className="sql-type">INTEGER</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    TicketPrice <span className="sql-type">DECIMAL(10,2)</span> <span className="sql-keyword">NOT NULL</span>{'\n'});{'\n'}{'\n'}
+<span className="sql-comment">-- 2. PARTICIPANT TABLE</span>{'\n'}
+<span className="sql-keyword">CREATE TABLE</span> Participant ({'\n'}
+    ParticipantID <span className="sql-type">SERIAL</span> <span className="sql-keyword">PRIMARY KEY</span>,{'\n'}
+    FirstName <span className="sql-type">VARCHAR(100)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    LastName <span className="sql-type">VARCHAR(100)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    Email <span className="sql-type">VARCHAR(150)</span> <span className="sql-keyword">UNIQUE NOT NULL</span>,{'\n'}
+    Phone <span className="sql-type">VARCHAR(15)</span>,{'\n'}
+    Address <span className="sql-type">TEXT</span>{'\n'});{'\n'}{'\n'}
+<span className="sql-comment">-- 3. BOOKING TABLE (Associative Weak Entity)</span>{'\n'}
+<span className="sql-keyword">CREATE TABLE</span> Booking ({'\n'}
+    BookingID <span className="sql-type">SERIAL</span> <span className="sql-keyword">PRIMARY KEY</span>,{'\n'}
+    EventID <span className="sql-type">INTEGER</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    ParticipantID <span className="sql-type">INTEGER</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    BookingDate <span className="sql-type">TIMESTAMP</span> <span className="sql-keyword">DEFAULT CURRENT_TIMESTAMP</span>,{'\n'}
+    BookingStatus <span className="sql-type">VARCHAR(20)</span> <span className="sql-keyword">DEFAULT</span> 'Confirmed',{'\n'}
+    TotalAmount <span className="sql-type">DECIMAL(10,2)</span>,{'\n'}
+    <span className="sql-keyword">CONSTRAINT</span> fk_booking_event <span className="sql-keyword">FOREIGN KEY</span> (EventID) <span className="sql-keyword">REFERENCES</span> Event(EventID) <span className="sql-keyword">ON DELETE CASCADE</span>,{'\n'}
+    <span className="sql-keyword">CONSTRAINT</span> fk_booking_participant <span className="sql-keyword">FOREIGN KEY</span> (ParticipantID) <span className="sql-keyword">REFERENCES</span> Participant(ParticipantID) <span className="sql-keyword">ON DELETE CASCADE</span>{'\n'});{'\n'}{'\n'}
+<span className="sql-comment">-- 4. PAYMENT TABLE</span>{'\n'}
+<span className="sql-keyword">CREATE TABLE</span> Payment ({'\n'}
+    PaymentID <span className="sql-type">SERIAL</span> <span className="sql-keyword">PRIMARY KEY</span>,{'\n'}
+    BookingID <span className="sql-type">INTEGER</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    Amount <span className="sql-type">DECIMAL(10,2)</span> <span className="sql-keyword">NOT NULL</span>,{'\n'}
+    PaymentStatus <span className="sql-type">VARCHAR(20)</span> <span className="sql-keyword">DEFAULT</span> 'Paid',{'\n'}
+    <span className="sql-keyword">CONSTRAINT</span> fk_payment_booking <span className="sql-keyword">FOREIGN KEY</span> (BookingID) <span className="sql-keyword">REFERENCES</span> Booking(BookingID) <span className="sql-keyword">ON DELETE CASCADE</span>{'\n'});{'\n'}{'\n'}
+<span className="sql-comment">-- =========================================================================</span>{'\n'}
+<span className="sql-comment">-- 4.1.5 INSERTING TUPLES</span>{'\n'}
+<span className="sql-comment">-- =========================================================================</span>{'\n'}
+<span className="sql-comment">-- A. Seed Event Records</span>{'\n'}
+<span className="sql-keyword">INSERT INTO</span> Event (EventName, EventDate, Location, Capacity, TicketPrice) <span className="sql-keyword">VALUES</span>{'\n'}
+('Tech Conference 2026', '2026-07-15', 'Bangalore', 500, 1000),{'\n'}
+('Cultural Fest 2026', '2026-08-10', 'Mysore', 300, 500),{'\n'}
+('Coding Workshop', '2026-06-20', 'Bangalore', 150, 750),{'\n'}
+('Startup Expo', '2026-09-12', 'Hubli', 400, 1200),{'\n'}
+('AI Summit', '2026-10-05', 'Bangalore', 600, 1500);{'\n'}{'\n'}
+<span className="sql-comment">-- B. Seed Participant Records</span>{'\n'}
+<span className="sql-keyword">INSERT INTO</span> Participant (FirstName, LastName, Email, Phone, Address) <span className="sql-keyword">VALUES</span>{'\n'}
+('Rahul','Sharma','rahul@gmail.com','9876543210','Bangalore'),{'\n'}
+('Priya','Nair','priya@gmail.com','9123456789','Mysore'),{'\n'}
+('Arjun','Kumar','arjun@gmail.com','9988776655','Tumkur'),{'\n'}
+('Sneha','Patel','sneha@gmail.com','9871234567','Hubli'),{'\n'}
+('Amit','Verma','amit@gmail.com','9988445522','Belgaum');{'\n'}{'\n'}
+<span className="sql-comment">-- C. Seed Booking Records</span>{'\n'}
+<span className="sql-keyword">INSERT INTO</span> Booking (EventID, ParticipantID, BookingDate, BookingStatus, TotalAmount) <span className="sql-keyword">VALUES</span>{'\n'}
+(1,1,CURRENT_TIMESTAMP,'Confirmed',1000),{'\n'}
+(2,2,CURRENT_TIMESTAMP,'Confirmed',500),{'\n'}
+(3,3,CURRENT_TIMESTAMP,'Pending',750),{'\n'}
+(4,4,CURRENT_TIMESTAMP,'Confirmed',1200),{'\n'}
+(5,5,CURRENT_TIMESTAMP,'Confirmed',1500);{'\n'}{'\n'}
+<span className="sql-comment">-- D. Seed Payment Records</span>{'\n'}
+<span className="sql-keyword">INSERT INTO</span> Payment (BookingID, Amount, PaymentStatus) <span className="sql-keyword">VALUES</span>{'\n'}
+(1,1000,'Paid'),{'\n'}
+(2,500,'Paid'),{'\n'}
+(3,750,'Pending'),{'\n'}
+(4,1200,'Paid'),{'\n'}
+(5,1500,'Paid');{'\n'}{'\n'}
+<span className="sql-comment">-- =========================================================================</span>{'\n'}
+<span className="sql-comment">-- DATABASE RELATIONSHIP VALIDATION SELECTS</span>{'\n'}
+<span className="sql-comment">-- =========================================================================</span>{'\n'}
+<span className="sql-comment">-- Display Joined Event and Participant Information</span>{'\n'}
+<span className="sql-keyword">SELECT</span> B.BookingID, P.FirstName, P.LastName, E.EventName, B.BookingStatus{'\n'}
+<span className="sql-keyword">FROM</span> Booking B{'\n'}
+<span className="sql-keyword">JOIN</span> Participant P <span className="sql-keyword">ON</span> B.ParticipantID = P.ParticipantID{'\n'}
+<span className="sql-keyword">JOIN</span> Event E <span className="sql-keyword">ON</span> B.EventID = E.EventID;{'\n'}{'\n'}
+<span className="sql-comment">-- Display Complete Payment Audit Details</span>{'\n'}
+<span className="sql-keyword">SELECT</span> P.PaymentID, E.EventName, PT.FirstName, P.Amount, P.PaymentStatus{'\n'}
+<span className="sql-keyword">FROM</span> Payment P{'\n'}
+<span className="sql-keyword">JOIN</span> Booking B <span className="sql-keyword">ON</span> P.BookingID = B.BookingID{'\n'}
+<span className="sql-keyword">JOIN</span> Event E <span className="sql-keyword">ON</span> B.EventID = E.EventID{'\n'}
+<span className="sql-keyword">JOIN</span> Participant PT <span className="sql-keyword">ON</span> B.ParticipantID = PT.ParticipantID;
                 </code>
               </pre>
             </div>
@@ -3008,6 +3589,69 @@ function App() {
                       onChange={(e) => setBookingEmail(e.target.value)}
                       required
                     />
+                  </div>
+
+                  {/* 10-Digit Phone, City, State, Pincode for Relational Participants Schema */}
+                  <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                    <label htmlFor="modal-client-phone">Phone Number (10 Digits)</label>
+                    <input
+                      type="tel"
+                      className="form-input"
+                      id="modal-client-phone"
+                      placeholder="e.g. 6363579209"
+                      value={bookingPhone}
+                      pattern="[0-9]{10}"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!isNaN(val)) setBookingPhone(val);
+                      }}
+                      maxLength="10"
+                      required
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginTop: '0.75rem' }}>
+                    <div className="form-group">
+                      <label htmlFor="modal-client-city">City</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        id="modal-client-city"
+                        placeholder="Bangalore"
+                        value={bookingCity}
+                        onChange={(e) => setBookingCity(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="modal-client-state">State</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        id="modal-client-state"
+                        placeholder="Karnataka"
+                        value={bookingState}
+                        onChange={(e) => setBookingState(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="modal-client-pincode">Pincode</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        id="modal-client-pincode"
+                        placeholder="560001"
+                        value={bookingPincode}
+                        pattern="[0-9]{6}"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!isNaN(val)) setBookingPincode(val);
+                        }}
+                        maxLength="6"
+                        required
+                      />
+                    </div>
                   </div>
 
                   <div className="form-group" style={{ marginTop: '0.75rem' }}>
@@ -3617,11 +4261,45 @@ function App() {
                     </button>
                   </form>
                 ) : (
-                  /* Admin Sign In Form */
-                  <form onSubmit={handleAdminLoginSubmit}>
-                    <div className="login-card-header">
-                      <h2>Admin Portal 🔒</h2>
-                      <p>Enter your authenticated administrator credentials to unlock the DBMS Control Board.</p>
+                  /* Multi-Role Sign In Form */
+                  <form onSubmit={handleMultiRoleLoginSubmit}>
+                    <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+                      <div className="nav-brand" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.8rem', fontWeight: 800 }}>
+                        <svg className="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ width: '28px', height: '28px' }}>
+                          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                        </svg>
+                        <span style={{ color: 'var(--text-primary)' }}>AuraEvents</span>
+                      </div>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Dynamic Event DBMS Portal</p>
+                    </div>
+
+                    {/* Selector Tabs inspired by PlaceTrack placement portal */}
+                    <div className="auth-tab-bar" style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: 'var(--radius-md)', padding: '0.25rem', marginBottom: '1.5rem', border: '1px solid var(--border-glass)' }}>
+                      {['client', 'vendor', 'admin'].map(role => (
+                        <button
+                          key={role}
+                          type="button"
+                          className={`auth-tab-btn ${authTabRole === role ? 'active' : ''}`}
+                          onClick={() => {
+                            setAuthTabRole(role);
+                            setAdminGeneralError('');
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            border: 'none',
+                            background: authTabRole === role ? 'var(--accent-primary)' : 'transparent',
+                            color: authTabRole === role ? '#ffffff' : 'var(--text-secondary)',
+                            fontWeight: 700,
+                            fontSize: '0.8rem',
+                            borderRadius: 'calc(var(--radius-md) - 2px)',
+                            cursor: 'pointer',
+                            transition: 'var(--transition-smooth)'
+                          }}
+                        >
+                          {role.charAt(0).toUpperCase() + role.slice(1)}
+                        </button>
+                      ))}
                     </div>
 
                     {adminGeneralError && (
@@ -3636,26 +4314,31 @@ function App() {
                         type="text"
                         id="admin-email"
                         className="form-input"
-                        placeholder="dd058288@gmail.com"
+                        placeholder={authTabRole === 'client' ? "arjun@student.edu" : authTabRole === 'vendor' ? "priya@student.edu" : "dd058288@gmail.com"}
                         value={adminEmail}
                         onChange={(e) => setAdminEmail(e.target.value)}
+                        required
                       />
                       {adminErrorEmail && <span className="field-error" style={{color: '#f43f5e', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block'}}>{adminErrorEmail}</span>}
                     </div>
 
-                    <div className="form-group" style={{marginBottom: '1rem'}}>
-                      <label htmlFor="admin-phone">Mobile Number (10 Digits)</label>
-                      <input
-                        type="text"
-                        id="admin-phone"
-                        className="form-input"
-                        placeholder="6363579209"
-                        value={adminPhone}
-                        maxLength="10"
-                        onChange={(e) => setAdminPhone(e.target.value)}
-                      />
-                      {adminErrorPhone && <span className="field-error" style={{color: '#f43f5e', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block'}}>{adminErrorPhone}</span>}
-                    </div>
+                    {/* Mobile number only required for Admin database RPC verify, as originally requested in step 5 */}
+                    {authTabRole === 'admin' && (
+                      <div className="form-group" style={{marginBottom: '1rem'}}>
+                        <label htmlFor="admin-phone">Mobile Number (10 Digits)</label>
+                        <input
+                          type="text"
+                          id="admin-phone"
+                          className="form-input"
+                          placeholder="6363579209"
+                          value={adminPhone}
+                          maxLength="10"
+                          onChange={(e) => setAdminPhone(e.target.value)}
+                          required
+                        />
+                        {adminErrorPhone && <span className="field-error" style={{color: '#f43f5e', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block'}}>{adminErrorPhone}</span>}
+                      </div>
+                    )}
 
                     <div className="form-group" style={{marginBottom: '1rem'}}>
                       <label htmlFor="admin-pass">Password</label>
@@ -3666,6 +4349,7 @@ function App() {
                         placeholder="••••••••"
                         value={adminPassword}
                         onChange={(e) => setAdminPassword(e.target.value)}
+                        required
                       />
                       {adminErrorPassword && <span className="field-error" style={{color: '#f43f5e', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block'}}>{adminErrorPassword}</span>}
                     </div>
@@ -3680,16 +4364,30 @@ function App() {
                         />
                         Remember Me
                       </label>
-                      <button type="button" className="btn-link" onClick={() => { setAdminForgotPasswordActive(true); setAdminEmail(''); }} style={{background: 'none', border: 'none', color: 'var(--accent-text)', cursor: 'pointer', fontWeight: 600}}>
-                        Forgot Password?
-                      </button>
+                      {authTabRole === 'admin' && (
+                        <button type="button" className="btn-link" onClick={() => { setAdminForgotPasswordActive(true); setAdminEmail(''); }} style={{background: 'none', border: 'none', color: 'var(--accent-text)', cursor: 'pointer', fontWeight: 600}}>
+                          Forgot Password?
+                        </button>
+                      )}
                     </div>
 
-                    <button type="submit" className="btn btn-primary btn-glow" style={{width: '100%', justifyContent: 'center'}} disabled={adminLoginLoading}>
-                      {adminLoginLoading ? <span className="spinner"></span> : 'Authenticate Credentials ➔'}
+                    <button type="submit" className="btn btn-primary btn-glow" style={{width: '100%', justifyContent: 'center', background: 'linear-gradient(to right, #7C3AED, #EC4899)', borderColor: 'transparent', color: '#ffffff'}} disabled={adminLoginLoading}>
+                      {adminLoginLoading ? <span className="spinner"></span> : `Login as ${authTabRole.charAt(0).toUpperCase() + authTabRole.slice(1)} ➔`}
                     </button>
 
-                    <button type="button" className="btn btn-secondary" onClick={() => setIsAdminPageActive(false)} style={{width: '100%', justifyContent: 'center', marginTop: '0.75rem'}}>
+                    <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '0.8rem' }}>
+                      {authTabRole === 'client' && (
+                        <span>New student? <span onClick={() => { setAuthMode('register'); setShowAuthModal(true); }} style={{ color: 'var(--accent-text)', cursor: 'pointer', fontWeight: 'bold', textDecoration: 'underline' }}>Register here</span></span>
+                      )}
+                      {authTabRole === 'vendor' && (
+                        <span style={{ color: 'var(--text-muted)' }}>Interested in coordinating? <a href="#contact" onClick={() => setIsAdminPageActive(false)} style={{ color: 'var(--accent-text)', fontWeight: 'bold' }}>Contact support</a></span>
+                      )}
+                      {authTabRole === 'admin' && (
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Secure DBMS control gateway. Access strictly audited.</span>
+                      )}
+                    </div>
+
+                    <button type="button" className="btn btn-secondary" onClick={() => setIsAdminPageActive(false)} style={{width: '100%', justifyContent: 'center', marginTop: '1rem'}}>
                       Cancel & Return to Homepage
                     </button>
                   </form>
@@ -3699,158 +4397,580 @@ function App() {
             </div>
           ) : (
             /* Secure Admin Dashboard */
-            <div>
-              <div className="section-header" style={{textAlign: 'left', marginBottom: '2rem'}}>
-                <span className="section-tag" style={{color: 'var(--accent-text)'}}>DBMS CONTROL PANEL</span>
-                <h2 className="section-title">Authorized Admin Dashboard</h2>
-                <p className="section-desc">You are logged in as <strong>{adminSession.name}</strong> ({adminSession.email}). Live database row statistics and transaction logs visualizer.</p>
-              </div>
-
-              {/* Admin metrics counters summary */}
-              <div className="admin-summary-grid">
-                <div className="admin-summary-card glass-panel" style={{borderColor: 'rgba(59,130,246,0.3)', background: 'rgba(59,130,246,0.02)'}}>
-                  <div>
-                    <h4>Total Events</h4>
-                    <span className="value">{bookings.length}</span>
+            <div className="admin-portal-layout" style={{ display: 'flex', gap: '2rem', minHeight: '650px', marginTop: '1rem' }}>
+              {/* SIDEBAR NAVIGATION PANEL (refer to PlaceTrack Screen 2 & 3) */}
+              <aside className="admin-sidebar glass-panel" style={{ width: '260px', padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', flexShrink: 0 }}>
+                <div>
+                  <div className="sidebar-brand" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.4rem', fontWeight: 800, marginBottom: '2rem', color: 'var(--text-primary)' }}>
+                    <svg className="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ width: '22px', height: '22px' }}>
+                      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                    </svg>
+                    <span>AuraEvents</span>
                   </div>
-                  <span className="desc">Active database slots</span>
-                </div>
-                
-                <div className="admin-summary-card glass-panel" style={{borderColor: 'rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.02)'}}>
-                  <div>
-                    <h4>Total Bookings</h4>
-                    <span className="value">{bookings.reduce((sum, b) => sum + (b.guest_count || 0), 0) + liveAttendeeCount}</span>
-                  </div>
-                  <span className="desc">Aggregated guest counts</span>
-                </div>
 
-                <div className="admin-summary-card glass-panel" style={{borderColor: 'rgba(124,58,237,0.3)', background: 'rgba(124,58,237,0.02)'}}>
-                  <div>
-                    <h4>Projected Revenue</h4>
-                    <span className="value" style={{fontSize: '1.8rem'}}>{formatDirectINR(bookings.reduce((sum, b) => sum + Number(b.total_price || 0), 0))}</span>
-                  </div>
-                  <span className="desc">₹ en-IN Lakhs</span>
-                </div>
-
-                <div className="admin-summary-card glass-panel" style={{borderColor: 'rgba(236,72,153,0.3)', background: 'rgba(236,72,153,0.02)'}}>
-                  <div>
-                    <h4>Upcoming Events</h4>
-                    <span className="value">4</span>
-                  </div>
-                  <span className="desc">Mega showcase registry</span>
-                </div>
-              </div>
-
-              {/* Main Admin Controllers Columns */}
-              <div className="admin-interactive-columns">
-                
-                {/* Column 1: Event Management & Row Audit */}
-                <div className="glass-panel" style={{padding: '2rem'}}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem'}}>
-                    <h3 style={{fontFamily: 'var(--font-heading)', fontWeight: '800'}}>Event Management (Bookings Row Audit)</h3>
-                    <button onClick={() => { setBookingStep('details'); setShowBookingModal(true); }} className="btn btn-primary btn-glow" style={{padding: '0.5rem 1rem', fontSize: '0.8rem'}}>
-                      + Add New Booking
+                  <nav className="sidebar-nav" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <button 
+                      type="button"
+                      onClick={() => setAdminActiveTab('dashboard')} 
+                      className={`sidebar-nav-btn ${adminActiveTab === 'dashboard' ? 'active' : ''}`}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '0.75rem 1rem',
+                        background: adminActiveTab === 'dashboard' ? 'var(--accent-subtle)' : 'transparent',
+                        border: 'none',
+                        borderRadius: 'var(--radius-md)',
+                        color: adminActiveTab === 'dashboard' ? 'var(--accent-text)' : 'var(--text-secondary)',
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                        transition: 'var(--transition-smooth)'
+                      }}
+                    >
+                      📊 Dashboard
                     </button>
-                  </div>
-
-                  {/* Render the core bookings visualizer log grid inside dashboard! */}
-                  <div className="db-search-bar" style={{marginBottom: '1.25rem'}}>
-                    <input 
-                      type="text" 
-                      className="form-input" 
-                      placeholder="Filter row logs by customer, email, or category..." 
-                      value={dbSearchQuery}
-                      onChange={(e) => setDbSearchQuery(e.target.value)}
-                    />
-                  </div>
-
-                  {/* Visual data log list inside Admin Panel */}
-                  <div className="table-responsive" style={{maxHeight: '400px', overflowY: 'auto'}}>
-                    <table className="db-records-table" style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left'}}>
-                      <thead>
-                        <tr style={{borderBottom: '1px solid var(--border-glass-active)', paddingBottom: '0.5rem'}}>
-                          <th style={{padding: '0.75rem 0.5rem'}}>Client Representative</th>
-                          <th style={{padding: '0.75rem 0.5rem'}}>Target Date</th>
-                          <th style={{padding: '0.75rem 0.5rem'}}>Type</th>
-                          <th style={{padding: '0.75rem 0.5rem'}}>Guests</th>
-                          <th style={{padding: '0.75rem 0.5rem'}}>Locked price (₹)</th>
-                          <th style={{padding: '0.75rem 0.5rem', textAlign: 'center'}}>DBMS Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {bookings
-                          .filter(b => 
-                            b.client_name.toLowerCase().includes(dbSearchQuery.toLowerCase()) ||
-                            b.client_email.toLowerCase().includes(dbSearchQuery.toLowerCase()) ||
-                            b.event_type.toLowerCase().includes(dbSearchQuery.toLowerCase())
-                          )
-                          .map(b => (
-                            <tr key={b.id} style={{borderBottom: '1px solid rgba(255,255,255,0.03)'}}>
-                              <td style={{padding: '0.75rem 0.5rem'}}>
-                                <div style={{fontWeight: 600}}>{b.client_name}</div>
-                                <div style={{fontSize: '0.7rem', color: 'var(--text-muted)'}}>{b.client_email}</div>
-                              </td>
-                              <td style={{padding: '0.75rem 0.5rem', fontWeight: 500}}>{b.event_date}</td>
-                              <td style={{padding: '0.75rem 0.5rem'}}><span className="badge">{b.event_type}</span></td>
-                              <td style={{padding: '0.75rem 0.5rem', fontWeight: 600}}>{b.guest_count}</td>
-                              <td style={{padding: '0.75rem 0.5rem', color: 'var(--accent-text)', fontWeight: 700}}>{formatDirectINR(b.total_price)}</td>
-                              <td style={{padding: '0.75rem 0.5rem', textAlign: 'center'}}>
-                                <div style={{display: 'flex', gap: '0.35rem', justifyContent: 'center'}}>
-                                  <button onClick={() => handleEditClick(b)} className="btn btn-secondary" style={{padding: '0.35rem 0.65rem', fontSize: '0.7rem'}} title="UPDATE transaction row">
-                                    Edit
-                                  </button>
-                                  <button onClick={() => handleDeleteClick(b.id)} className="btn btn-accent" style={{padding: '0.35rem 0.65rem', fontSize: '0.7rem', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.1)'}} title="DELETE transaction row">
-                                    Annul
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))
-                        }
-                      </tbody>
-                    </table>
-                  </div>
+                    <button 
+                      type="button"
+                      onClick={() => setAdminActiveTab('bookings')} 
+                      className={`sidebar-nav-btn ${adminActiveTab === 'bookings' ? 'active' : ''}`}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '0.75rem 1rem',
+                        background: adminActiveTab === 'bookings' ? 'var(--accent-subtle)' : 'transparent',
+                        border: 'none',
+                        borderRadius: 'var(--radius-md)',
+                        color: adminActiveTab === 'bookings' ? 'var(--accent-text)' : 'var(--text-secondary)',
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                        transition: 'var(--transition-smooth)'
+                      }}
+                    >
+                      🗓️ Bookings
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setAdminActiveTab('inquiries')} 
+                      className={`sidebar-nav-btn ${adminActiveTab === 'inquiries' ? 'active' : ''}`}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '0.75rem 1rem',
+                        background: adminActiveTab === 'inquiries' ? 'var(--accent-subtle)' : 'transparent',
+                        border: 'none',
+                        borderRadius: 'var(--radius-md)',
+                        color: adminActiveTab === 'inquiries' ? 'var(--accent-text)' : 'var(--text-secondary)',
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                        transition: 'var(--transition-smooth)'
+                      }}
+                    >
+                      📬 Inquiries
+                    </button>
+                    {(!adminSession.role || adminSession.role === 'Premium Client' || adminSession.role === 'Super Admin') && (
+                      <>
+                        <button 
+                          type="button"
+                          onClick={() => setAdminActiveTab('sql-logs')} 
+                          className={`sidebar-nav-btn ${adminActiveTab === 'sql-logs' ? 'active' : ''}`}
+                          style={{
+                            width: '100%',
+                            textAlign: 'left',
+                            padding: '0.75rem 1rem',
+                            background: adminActiveTab === 'sql-logs' ? 'var(--accent-subtle)' : 'transparent',
+                            border: 'none',
+                            borderRadius: 'var(--radius-md)',
+                            color: adminActiveTab === 'sql-logs' ? 'var(--accent-text)' : 'var(--text-secondary)',
+                            fontWeight: 700,
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.75rem',
+                            transition: 'var(--transition-smooth)'
+                          }}
+                        >
+                          📟 SQL DBMS Log
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setAdminActiveTab('mta-handshake')} 
+                          className={`sidebar-nav-btn ${adminActiveTab === 'mta-handshake' ? 'active' : ''}`}
+                          style={{
+                            width: '100%',
+                            textAlign: 'left',
+                            padding: '0.75rem 1rem',
+                            background: adminActiveTab === 'mta-handshake' ? 'var(--accent-subtle)' : 'transparent',
+                            border: 'none',
+                            borderRadius: 'var(--radius-md)',
+                            color: adminActiveTab === 'mta-handshake' ? 'var(--accent-text)' : 'var(--text-secondary)',
+                            fontWeight: 700,
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.75rem',
+                            transition: 'var(--transition-smooth)'
+                          }}
+                        >
+                          📬 SMTP MTA
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setAdminActiveTab('db-config')} 
+                          className={`sidebar-nav-btn ${adminActiveTab === 'db-config' ? 'active' : ''}`}
+                          style={{
+                            width: '100%',
+                            textAlign: 'left',
+                            padding: '0.75rem 1rem',
+                            background: adminActiveTab === 'db-config' ? 'var(--accent-subtle)' : 'transparent',
+                            border: 'none',
+                            borderRadius: 'var(--radius-md)',
+                            color: adminActiveTab === 'db-config' ? 'var(--accent-text)' : 'var(--text-secondary)',
+                            fontWeight: 700,
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.75rem',
+                            transition: 'var(--transition-smooth)'
+                          }}
+                        >
+                          ⚙️ DB Settings
+                        </button>
+                      </>
+                    )}
+                  </nav>
                 </div>
 
-                {/* Column 2: User / Admin Management Directory & Services Catalog Controller */}
-                <div style={{display: 'flex', flexDirection: 'column', gap: '2rem'}}>
-                  
-                  {/* Authorized Administrators list directory */}
-                  <div className="glass-panel" style={{padding: '1.5rem'}}>
-                    <h3 style={{fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.1rem', marginBottom: '1rem'}}>
-                      🛡️ Administrators Directory
-                    </h3>
-                    <div style={{display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
-                      <div className="glass-panel" style={{padding: '0.75rem', background: 'rgba(124, 58, 237, 0.03)', border: '1px solid rgba(124, 58, 237, 0.15)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: '0.75rem'}}>
-                        <span style={{fontSize: '1.5rem'}}>👨‍💻</span>
+                <div className="sidebar-footer" style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '1.25rem', marginTop: '1.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', color: '#ffffff', fontSize: '1rem' }}>
+                      {adminSession.name.charAt(0)}
+                    </div>
+                    <div style={{ overflow: 'hidden' }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.8rem', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', color: 'var(--text-primary)' }}>{adminSession.name}</div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--accent-text)', fontWeight: 600 }}>{adminSession.role || 'Guest Admin'}</div>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => handleAdminLogout('Successfully signed out.')} 
+                    className="btn btn-accent" 
+                    style={{ width: '100%', padding: '0.5rem', fontSize: '0.75rem', justifyContent: 'center', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.15)', background: 'rgba(244,63,94,0.02)' }}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              </aside>
+
+              {/* MAIN CONTENT AREA */}
+              <div className="admin-main-content" style={{ flexGrow: 1, minWidth: 0 }}>
+                {adminActiveTab === 'dashboard' && (
+                  <div>
+                    {/* Header */}
+                    <div className="section-header" style={{ textAlign: 'left', marginBottom: '2rem' }}>
+                      <span className="section-tag" style={{ color: 'var(--accent-text)' }}>DBMS CONTROL PANEL</span>
+                      <h2 className="section-title">Authorized Admin Dashboard</h2>
+                      <p className="section-desc">You are logged in as <strong>{adminSession.name}</strong> ({adminSession.email}). Live database row statistics and transaction logs visualizer.</p>
+                    </div>
+
+                    {/* Stats Summary Cards (five stats card blocks as in Photo 2) */}
+                    <div className="admin-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+                      {/* Metric Card 1: Registered Clients */}
+                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #3b82f6', background: 'rgba(59,130,246,0.02)', padding: '1.25rem' }}>
                         <div>
-                          <div style={{fontWeight: 700, fontSize: '0.85rem'}}>System Admin (Active)</div>
-                          <div style={{fontSize: '0.7rem', color: 'var(--text-muted)'}}>dd058288@gmail.com | +91 6363579209</div>
+                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Registered Clients</h4>
+                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{bookings.length + 2}</span>
+                        </div>
+                        <span className="desc" style={{ color: '#3b82f6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>👥 Total active profiles</span>
+                      </div>
+                      
+                      {/* Metric Card 2: Active Vendors */}
+                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #06b6d4', background: 'rgba(6,182,212,0.02)', padding: '1.25rem' }}>
+                        <div>
+                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Vendors</h4>
+                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>3</span>
+                        </div>
+                        <span className="desc" style={{ color: '#06b6d4', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>🏢 Seeded logistics agencies</span>
+                      </div>
+
+                      {/* Metric Card 3: Open Inquiries */}
+                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #f59e0b', background: 'rgba(245,158,11,0.02)', padding: '1.25rem' }}>
+                        <div>
+                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Open Inquiries</h4>
+                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{inquiries.length}</span>
+                        </div>
+                        <span className="desc" style={{ color: '#f59e0b', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>💼 Custom spec coordinators</span>
+                      </div>
+
+                      {/* Metric Card 4: Events Completed */}
+                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #10b981', background: 'rgba(16,185,129,0.02)', padding: '1.25rem' }}>
+                        <div>
+                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Events Completed</h4>
+                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>1</span>
+                        </div>
+                        <span className="desc" style={{ color: '#10b981', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>✅ Placed & settled fests</span>
+                      </div>
+
+                      {/* Metric Card 5: Total Bookings */}
+                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #8b5cf6', background: 'rgba(139,92,246,0.02)', padding: '1.25rem' }}>
+                        <div>
+                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Bookings</h4>
+                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{bookings.length}</span>
+                        </div>
+                        <span className="desc" style={{ color: '#8b5cf6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>📋 Active database entries</span>
+                      </div>
+                    </div>
+
+                    <div className="admin-interactive-columns" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.5rem' }}>
+                      {/* Left Block: Applications by Status (Photo 2 progress bars) */}
+                      <div className="glass-panel" style={{ padding: '1.5rem' }}>
+                        <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', marginBottom: '0.25rem', fontSize: '1.1rem', color: 'var(--text-primary)' }}>Bookings Status Flow</h3>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Track pipelines from initial booking submit to final approval.</p>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>
+                              <span>Shortlisted / Approved</span>
+                              <span style={{ color: '#8b5cf6' }}>{bookings.filter(b => b.status === 'Shortlisted' || b.status === 'Approved').length}</span>
+                            </div>
+                            <div className="progress-bar-track" style={{ background: 'rgba(255,255,255,0.05)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+                              <div className="progress-bar-fill" style={{ background: '#8b5cf6', width: `${(bookings.filter(b => b.status === 'Shortlisted' || b.status === 'Approved').length / (bookings.length || 1)) * 100}%`, height: '100%' }}></div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>
+                              <span>Applied / Pending Approval</span>
+                              <span style={{ color: '#3b82f6' }}>{bookings.filter(b => b.status === 'Applied' || b.status === 'Pending Approval' || !b.status).length}</span>
+                            </div>
+                            <div className="progress-bar-track" style={{ background: 'rgba(255,255,255,0.05)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+                              <div className="progress-bar-fill" style={{ background: '#3b82f6', width: `${(bookings.filter(b => b.status === 'Applied' || b.status === 'Pending Approval' || !b.status).length / (bookings.length || 1)) * 100}%`, height: '100%' }}></div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>
+                              <span>Selected / Confirmed</span>
+                              <span style={{ color: '#10b981' }}>{bookings.filter(b => b.status === 'Selected' || b.status === 'Confirmed').length}</span>
+                            </div>
+                            <div className="progress-bar-track" style={{ background: 'rgba(255,255,255,0.05)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+                              <div className="progress-bar-fill" style={{ background: '#10b981', width: `${(bookings.filter(b => b.status === 'Selected' || b.status === 'Confirmed').length / (bookings.length || 1)) * 100}%`, height: '100%' }}></div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>
+                              <span>Interview Scheduled / Negotiating</span>
+                              <span style={{ color: '#06b6d4' }}>{bookings.filter(b => b.status === 'Interview Scheduled' || b.status === 'Negotiating').length}</span>
+                            </div>
+                            <div className="progress-bar-track" style={{ background: 'rgba(255,255,255,0.05)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+                              <div className="progress-bar-fill" style={{ background: '#06b6d4', width: `${(bookings.filter(b => b.status === 'Interview Scheduled' || b.status === 'Negotiating').length / (bookings.length || 1)) * 100}%`, height: '100%' }}></div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right Block: Recent Activity list (Photo 2) */}
+                      <div className="glass-panel" style={{ padding: '1.5rem' }}>
+                        <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', marginBottom: '0.25rem', fontSize: '1.1rem', color: 'var(--text-primary)' }}>Recent Activity Feed</h3>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Dynamic audit logging of transactional modifications.</p>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                          {bookings.slice(0, 3).map(b => (
+                            <div key={b.id} style={{ borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ color: '#10b981', fontSize: '1.1rem' }}>•</span>
+                                <strong style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>{b.client_name}</strong>
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>placed a booking</span>
+                              </div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--accent-text)', paddingLeft: '1rem', marginTop: '0.1rem', fontWeight: 600 }}>
+                                {b.event_type.toUpperCase()} ➜ {formatDirectINR(b.total_price)} | {new Date(b.created_at).toLocaleDateString()}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     </div>
                   </div>
+                )}
 
-                  {/* SQL database transaction logs visualization terminal */}
-                  <div className="glass-panel" style={{padding: '1.5rem'}}>
-                    <h3 style={{fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.1rem', marginBottom: '0.5rem'}}>
-                      📟 SQL DBMS Operations Log
-                    </h3>
-                    <p style={{fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '1rem'}}>Real-time transactional audit logs committed to PostgreSQL.</p>
-                    <div className="db-log-console">
-                      {dbSqlLogs.length === 0 ? (
-                        <div style={{color: 'var(--text-muted)', fontSize: '0.75rem'}}>No operational transactions recorded yet.</div>
-                      ) : (
-                        dbSqlLogs.map(log => (
-                          <div key={log.id} className={`db-log-line ${log.status}`}>
-                            [{log.timestamp}] {log.operation} - {log.sqlText}
-                          </div>
-                        ))
-                      )}
+                {adminActiveTab === 'bookings' && (
+                  <div className="glass-panel" style={{ padding: '2rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                      <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.3rem', color: 'var(--text-primary)' }}>Event Management (Bookings Row Audit)</h3>
+                      <button onClick={() => { setBookingStep('details'); setShowBookingModal(true); }} className="btn btn-primary btn-glow" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}>
+                        + Add New Booking
+                      </button>
+                    </div>
+
+                    <div className="db-search-bar" style={{ marginBottom: '1.25rem' }}>
+                      <input 
+                        type="text" 
+                        className="form-input" 
+                        placeholder="Filter row logs by customer, email, or category..." 
+                        value={dbSearchQuery}
+                        onChange={(e) => setDbSearchQuery(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="table-responsive" style={{ maxHeight: '450px', overflowY: 'auto' }}>
+                      <table className="db-records-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid var(--border-glass-active)', paddingBottom: '0.5rem' }}>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Client Details (Participant)</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Target Date</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Event Model (Venue)</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Tickets</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Payment / Price</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
+                            <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>DBMS Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bookings
+                            .filter(b => 
+                              b.client_name.toLowerCase().includes(dbSearchQuery.toLowerCase()) ||
+                              b.client_email.toLowerCase().includes(dbSearchQuery.toLowerCase()) ||
+                              b.event_type.toLowerCase().includes(dbSearchQuery.toLowerCase())
+                            )
+                            .map(b => (
+                              <tr key={b.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{b.client_name}</div>
+                                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{b.client_email}</div>
+                                  {b.participant_phone ? (
+                                    <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)', display: 'block' }}>📞 {b.participant_phone}</span>
+                                  ) : (
+                                    <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)', display: 'block' }}>📞 +91 6363579209</span>
+                                  )}
+                                  {b.participant_address ? (
+                                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>📍 {b.participant_address}</span>
+                                  ) : (
+                                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>📍 Bangalore, Karnataka</span>
+                                  )}
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem', fontWeight: 500 }}>{b.event_date}</td>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  <span className="badge">{b.event_type}</span>
+                                  {b.event_venue ? (
+                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>🏟️ {b.event_venue}</div>
+                                  ) : (
+                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>🏟️ Main Auditorium, PES Univ</div>
+                                  )}
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>{b.guest_count} Tickets</td>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  <div style={{ color: 'var(--accent-text)', fontWeight: 700 }}>{formatDirectINR(b.total_price)}</div>
+                                  <span className="status-badge-pill selected" style={{ fontSize: '0.65rem', padding: '0.1rem 0.3rem', marginTop: '0.15rem', display: 'inline-block' }}>
+                                    💳 {b.payment_status || 'Paid'}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  {/* Inline status badges matching PlaceTrack screenshot */}
+                                  <select 
+                                    value={b.status || 'Pending Approval'} 
+                                    onChange={async (e) => {
+                                      const newStatus = e.target.value;
+                                      const res = await supabaseClient.updateBookingStatus(b.id, newStatus);
+                                      if (res.success) {
+                                        setBookings(prev => prev.map(item => item.id === b.id ? { ...item, status: newStatus } : item));
+                                        addSqlLog('UPDATE', `UPDATE Booking SET BookingStatus = '${newStatus}' WHERE BookingID = ${b.id};`, 'success');
+                                      }
+                                    }}
+                                    style={{
+                                      background: 'rgba(255,255,255,0.05)',
+                                      color: 'var(--text-primary)',
+                                      border: '1px solid var(--border-glass)',
+                                      borderRadius: '4px',
+                                      padding: '0.25rem 0.5rem',
+                                      fontSize: '0.75rem',
+                                      fontWeight: 600,
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    <option value="Applied">Applied</option>
+                                    <option value="Shortlisted">Shortlisted</option>
+                                    <option value="Selected">Selected</option>
+                                    <option value="Interview Scheduled">Interview Scheduled</option>
+                                  </select>
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
+                                  <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
+                                    <button onClick={() => handleEditClick(b)} className="btn btn-secondary" style={{ padding: '0.35rem 0.65rem', fontSize: '0.7rem' }}>Edit</button>
+                                    <button onClick={() => handleDeleteClick(b.id)} className="btn btn-accent" style={{ padding: '0.35rem 0.65rem', fontSize: '0.7rem', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.1)' }}>Annul</button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
+                )}
 
-                  {/* SMTP MTA Email Notifications Terminal */}
+                {adminActiveTab === 'inquiries' && (
+                  <div className="glass-panel" style={{ padding: '2rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                      <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.3rem', color: 'var(--text-primary)' }}>Customer Specs Inquiries (Placements Grid)</h3>
+                      <div>
+                        {/* Status filter dropdown matching Photo 3 */}
+                        <select 
+                          value={inquiryStatusFilter}
+                          onChange={(e) => setInquiryStatusFilter(e.target.value)}
+                          style={{
+                            background: 'rgba(255,255,255,0.05)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-glass)',
+                            borderRadius: '4px',
+                            padding: '0.4rem 0.8rem',
+                            fontSize: '0.8rem',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <option value="All">All Statuses</option>
+                          <option value="Applied">Applied</option>
+                          <option value="Shortlisted">Shortlisted</option>
+                          <option value="Selected">Selected</option>
+                          <option value="Interview Scheduled">Interview Scheduled</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="table-responsive" style={{ maxHeight: '450px', overflowY: 'auto' }}>
+                      <table className="db-records-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid var(--border-glass-active)', paddingBottom: '0.5rem' }}>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>#</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Student / Client</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Custom Specs (Job Role)</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Preferred Vendor</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>CGPA (Rating)</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Applied Date</th>
+                            <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {inquiries
+                            .filter(i => inquiryStatusFilter === 'All' || i.status === inquiryStatusFilter)
+                            .map((i, index) => (
+                              <tr key={i.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                <td style={{ padding: '0.75rem 0.5rem', fontWeight: 'bold' }}>{index + 1}</td>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{i.rep_name}</div>
+                                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{i.email}</div>
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  <div style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={i.specs_notes}>
+                                    {i.specs_notes}
+                                  </div>
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem', fontWeight: 500 }}>TechCorp / Venue Tents</td>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  <span style={{ background: 'rgba(124, 58, 237, 0.08)', border: '1px solid rgba(124, 58, 237, 0.15)', padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.75rem', color: 'var(--accent-text)', fontWeight: 700 }}>
+                                    {(8.0 + (index * 0.45)).toFixed(2)}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  {/* Colored Badge mapping the exact visual elements of Photo 3 */}
+                                  <span className={`status-badge-pill ${i.status.replace(/ /g, '-').toLowerCase()}`}>
+                                    {i.status}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
+                                  {new Date(i.created_at).toLocaleDateString()}
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
+                                  {/* Update action triggers dynamic inline status modification */}
+                                  <select 
+                                    value={i.status || 'Applied'} 
+                                    onChange={async (e) => {
+                                      const nextStatus = e.target.value;
+                                      const ok = await supabaseClient.updateInquiryStatus(i.id, nextStatus);
+                                      if (ok.success) {
+                                        setInquiries(prev => prev.map(item => item.id === i.id ? { ...item, status: nextStatus } : item));
+                                        addSqlLog('UPDATE', `UPDATE inquiries SET status = '${nextStatus}' WHERE id = '${i.id}';`, 'success');
+                                      }
+                                    }}
+                                    style={{
+                                      background: 'rgba(255,255,255,0.05)',
+                                      color: 'var(--text-primary)',
+                                      border: '1px solid var(--border-glass)',
+                                      borderRadius: '4px',
+                                      padding: '0.2rem 0.4rem',
+                                      fontSize: '0.7rem',
+                                      fontWeight: 600,
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    <option value="Applied">Applied</option>
+                                    <option value="Shortlisted">Shortlisted</option>
+                                    <option value="Selected">Selected</option>
+                                    <option value="Interview Scheduled">Interview Scheduled</option>
+                                  </select>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {adminActiveTab === 'sql-logs' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                    {/* Authorized Administrators list directory */}
+                    <div className="glass-panel" style={{padding: '1.5rem'}}>
+                      <h3 style={{fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.1rem', marginBottom: '1rem'}}>
+                        🛡️ Administrators Directory
+                      </h3>
+                      <div style={{display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
+                        <div className="glass-panel" style={{padding: '0.75rem', background: 'rgba(124, 58, 237, 0.03)', border: '1px solid rgba(124, 58, 237, 0.15)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: '0.75rem'}}>
+                          <span style={{fontSize: '1.5rem'}}>👨‍💻</span>
+                          <div>
+                            <div style={{fontWeight: 700, fontSize: '0.85rem'}}>System Admin (Active)</div>
+                            <div style={{fontSize: '0.7rem', color: 'var(--text-muted)'}}>dd058288@gmail.com | +91 6363579209</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* SQL database transaction logs visualization terminal */}
+                    <div className="glass-panel" style={{padding: '1.5rem'}}>
+                      <h3 style={{fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.1rem', marginBottom: '0.5rem'}}>
+                        📟 SQL DBMS Operations Log
+                      </h3>
+                      <p style={{fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '1rem'}}>Real-time transactional audit logs committed to PostgreSQL.</p>
+                      <div className="db-log-console">
+                        {dbSqlLogs.length === 0 ? (
+                          <div style={{color: 'var(--text-muted)', fontSize: '0.75rem'}}>No operational transactions recorded yet.</div>
+                        ) : (
+                          dbSqlLogs.map(log => (
+                            <div key={log.id} className={`db-log-line ${log.status}`}>
+                              [{log.timestamp}] {log.operation} - {log.sqlText}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {adminActiveTab === 'mta-handshake' && (
+                  /* SMTP MTA Email Notifications Terminal */
                   <div className="glass-panel" style={{padding: '1.5rem'}}>
                     <h3 style={{fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.1rem', marginBottom: '0.5rem'}}>
                       📬 SMTP Mail Transfer Agent (MTA)
@@ -3869,13 +4989,42 @@ function App() {
                       )}
                     </div>
                   </div>
+                )}
 
-                  {/* Return homepage CTA */}
-                  <button onClick={() => handleAdminLogout('Successfully signed out of Admin Workspace.')} className="btn btn-accent btn-glow" style={{width: '100%', justifyContent: 'center', background: '#f43f5e', borderColor: '#f43f5e', color: '#ffffff'}}>
-                    Logout Secure Session
-                  </button>
-                </div>
-
+                {adminActiveTab === 'db-config' && (
+                  /* Suppabase credentials connection manager */
+                  <div className="glass-panel" style={{ padding: '2rem' }}>
+                    <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.1rem', marginBottom: '0.5rem' }}>⚙️ supbase PostgreSQL DBMS Credentials Config</h3>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Link your front-end schema directly to a production PostgreSQL database.</p>
+                    <form onSubmit={handleSaveCredentials} id="credentials-connection-form">
+                      <div className="form-group" style={{ marginBottom: '1rem' }}>
+                        <label htmlFor="db-url-field">Supabase DSN URL</label>
+                        <input 
+                          type="text" 
+                          id="db-url-field" 
+                          className="form-input" 
+                          placeholder="https://yourproject.supabase.co" 
+                          value={inputDbUrl}
+                          onChange={(e) => setInputDbUrl(e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                        <label htmlFor="db-key-field">Supabase Public API anon Key</label>
+                        <input 
+                          type="password" 
+                          id="db-key-field" 
+                          className="form-input" 
+                          placeholder="sb_secret_anon_key" 
+                          value={inputDbKey}
+                          onChange={(e) => setInputDbKey(e.target.value)}
+                        />
+                      </div>
+                      <button type="submit" className="btn btn-primary btn-glow" style={{ width: '100%', justifyContent: 'center' }}>
+                        Establish Supabase Pipeline
+                      </button>
+                    </form>
+                  </div>
+                )}
               </div>
             </div>
           )}

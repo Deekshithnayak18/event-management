@@ -1,19 +1,23 @@
 -- =========================================================================
 -- AuraEvents Database Management System (DBMS) Schema
--- DBMS Practical Project: Dynamic Infrastructure Booking System
--- Database: PostgreSQL (via Supabase)
+-- DBMS Practical College Mini-Project: ER Diagram Relational Mapping
+-- CHAPTER 4 - CODING: 4.1 BACK END
+-- Database: PostgreSQL (via Supabase / Local Sandbox)
 -- =========================================================================
 
 -- Enable secure cryptographic hashing extension
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- 1. DROP EXISTING TABLES IF THEY EXIST (To prevent conflict during re-runs)
+-- DROP EXISTING TABLES IF THEY EXIST (To prevent conflict during re-runs)
+DROP TABLE IF EXISTS Payment CASCADE;
+DROP TABLE IF EXISTS Booking CASCADE;
+DROP TABLE IF EXISTS Participant CASCADE;
+DROP TABLE IF EXISTS Event CASCADE;
 DROP TABLE IF EXISTS inquiries CASCADE;
-DROP TABLE IF EXISTS bookings CASCADE;
 DROP TABLE IF EXISTS services CASCADE;
 DROP TABLE IF EXISTS admins CASCADE;
 
--- 2. CREATE SERVICES DATABASE TABLE (Dynamic catalog of 18 services)
+-- CREATE services catalog table (for front-end catalog)
 CREATE TABLE services (
     id VARCHAR(50) PRIMARY KEY,
     title VARCHAR(100) NOT NULL,
@@ -26,30 +30,17 @@ CREATE TABLE services (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 3. CREATE BOOKINGS DATABASE TABLE (Dynamic event reservations made by users)
-CREATE TABLE bookings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    client_name VARCHAR(100) NOT NULL,
-    client_email VARCHAR(100) NOT NULL,
-    event_date DATE NOT NULL,
-    event_type VARCHAR(50) NOT NULL,
-    guest_count INTEGER NOT NULL CHECK (guest_count > 0),
-    selected_services TEXT[] DEFAULT '{}'::TEXT[] NOT NULL,
-    total_price NUMERIC(12, 2) NOT NULL CHECK (total_price >= 0),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    CONSTRAINT check_future_booking CHECK (event_date >= CURRENT_DATE)
-);
-
--- 4. CREATE INQUIRIES DATABASE TABLE (Log of custom spec requirements)
+-- CREATE inquiries table
 CREATE TABLE inquiries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     rep_name VARCHAR(100) NOT NULL,
     email VARCHAR(100) NOT NULL,
     specs_notes TEXT NOT NULL,
+    status VARCHAR(50) DEFAULT 'Applied' NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 5. CREATE ADMINS DATABASE TABLE (Secure Admin Accounts)
+-- CREATE admins table (Secure Admin Accounts)
 CREATE TABLE admins (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(100) NOT NULL,
@@ -59,10 +50,77 @@ CREATE TABLE admins (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- EVENT TABLE
+CREATE TABLE Event (
+    EventID SERIAL PRIMARY KEY,
+    EventName VARCHAR(100) NOT NULL,
+    EventDate DATE NOT NULL,
+    Location VARCHAR(150) NOT NULL,
+    Capacity INTEGER NOT NULL,
+    TicketPrice DECIMAL(10,2) NOT NULL
+);
+
+-- PARTICIPANT TABLE
+CREATE TABLE Participant (
+    ParticipantID SERIAL PRIMARY KEY,
+    FirstName VARCHAR(100) NOT NULL,
+    LastName VARCHAR(100) NOT NULL,
+    Email VARCHAR(150) UNIQUE NOT NULL,
+    Phone VARCHAR(15),
+    Address TEXT
+);
+
+-- BOOKING TABLE
+CREATE TABLE Booking (
+    BookingID SERIAL PRIMARY KEY,
+    EventID INTEGER NOT NULL,
+    ParticipantID INTEGER NOT NULL,
+    BookingDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    BookingStatus VARCHAR(20) DEFAULT 'Confirmed',
+    TotalAmount DECIMAL(10,2),
+    CONSTRAINT fk_booking_event FOREIGN KEY (EventID) REFERENCES Event(EventID) ON DELETE CASCADE,
+    CONSTRAINT fk_booking_participant FOREIGN KEY (ParticipantID) REFERENCES Participant(ParticipantID) ON DELETE CASCADE
+);
+
+-- PAYMENT TABLE
+CREATE TABLE Payment (
+    PaymentID SERIAL PRIMARY KEY,
+    BookingID INTEGER NOT NULL,
+    Amount DECIMAL(10,2) NOT NULL,
+    PaymentStatus VARCHAR(20) DEFAULT 'Paid',
+    CONSTRAINT fk_payment_booking FOREIGN KEY (BookingID) REFERENCES Booking(BookingID) ON DELETE CASCADE
+);
+
 -- =========================================================================
--- DML DATA SEEDING (Insert the 18 service catalog rows into the database)
+-- DATABASE TRIGGERS (Calculates derived TotalAmount column automatically)
 -- =========================================================================
 
+CREATE OR REPLACE FUNCTION calculate_booking_total()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_price DECIMAL(10, 2);
+BEGIN
+    -- Query ticket price from referenced Event table
+    SELECT TicketPrice INTO v_price 
+    FROM Event 
+    WHERE EventID = NEW.EventID;
+    
+    -- Calculate derived TotalAmount
+    NEW.TotalAmount := COALESCE(v_price, 0.00);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_calculate_booking_total
+BEFORE INSERT OR UPDATE ON Booking
+FOR EACH ROW
+EXECUTE FUNCTION calculate_booking_total();
+
+-- =========================================================================
+-- DML DATA SEEDING (Populate initial normalized records)
+-- =========================================================================
+
+-- Seed 18 services
 INSERT INTO services (id, title, category, base_price, pricing_model, description, icon_key, is_standard) VALUES
 ('infra', 'Venue Tents & Setup', 'Infrastructure', 1200.00, 'flat', 'Strong weather-proof tents, tables, chairs, and fencing for your event ground.', 'Infrastructure', TRUE),
 ('speakers', 'Stage Speakers & Sound', 'AV & Sound', 850.00, 'flat', 'High-quality speakers, amplifiers, and sound controllers to play clear audio.', 'Audio', TRUE),
@@ -83,7 +141,63 @@ INSERT INTO services (id, title, category, base_price, pricing_model, descriptio
 ('soundproof', 'Sound Isolation Setup', 'Infrastructure', 900.00, 'flat', 'Sound-dampening panels and blankets to block external noises.', 'Acoustics', FALSE),
 ('pyrotechnics', 'Special Effects & Sparklers', 'AV & Sound', 650.00, 'flat', 'Safe cold sparks, stage bubble machines, and paper confetti blasts.', 'Pyrotechnics', FALSE);
 
--- Seed default admin with pgcrypto bcrypt hash
+-- Seed Events
+INSERT INTO Event (EventName, EventDate, Location, Capacity, TicketPrice) VALUES 
+('Tech Conference 2026', '2026-07-15', 'Bangalore', 500, 1000.00),
+('Cultural Fest 2026', '2026-08-10', 'Mysore', 300, 500.00),
+('Coding Workshop', '2026-06-20', 'Bangalore', 150, 750.00),
+('Startup Expo', '2026-09-12', 'Hubli', 400, 1200.00),
+('AI Summit', '2026-10-05', 'Bangalore', 600, 1500.00);
+
+-- Verify Event insertions
+-- SELECT * FROM Event;
+
+-- Seed Participants
+INSERT INTO Participant (FirstName, LastName, Email, Phone, Address) VALUES 
+('Rahul','Sharma','rahul@gmail.com','9876543210','Bangalore'),
+('Priya','Nair','priya@gmail.com','9123456789','Mysore'),
+('Arjun','Kumar','arjun@gmail.com','9988776655','Tumkur'),
+('Sneha','Patel','sneha@gmail.com','9871234567','Hubli'),
+('Amit','Verma','amit@gmail.com','9988445522','Belgaum');
+
+-- Verify Participant insertions
+-- SELECT * FROM Participant;
+
+-- Seed Bookings
+INSERT INTO Booking (EventID, ParticipantID, BookingDate, BookingStatus, TotalAmount) VALUES 
+(1, 1, CURRENT_TIMESTAMP, 'Confirmed', 1000.00),
+(2, 2, CURRENT_TIMESTAMP, 'Confirmed', 500.00),
+(3, 3, CURRENT_TIMESTAMP, 'Pending', 750.00),
+(4, 4, CURRENT_TIMESTAMP, 'Confirmed', 1200.00),
+(5, 5, CURRENT_TIMESTAMP, 'Confirmed', 1500.00);
+
+-- Verify Booking insertions
+-- SELECT * FROM Booking;
+
+-- Seed Payments
+INSERT INTO Payment (BookingID, Amount, PaymentStatus) VALUES 
+(1, 1000.00, 'Paid'),
+(2, 500.00, 'Paid'),
+(3, 750.00, 'Pending'),
+(4, 1200.00, 'Paid'),
+(5, 1500.00, 'Paid');
+
+-- Verify Payment insertions
+-- SELECT * FROM Payment;
+
+-- Verify relationships: event bookings and payments
+-- SELECT B.BookingID, P.FirstName, P.LastName, E.EventName, B.BookingStatus
+-- FROM Booking B
+-- JOIN Participant P ON B.ParticipantID = P.ParticipantID
+-- JOIN Event E ON B.EventID = E.EventID;
+
+-- SELECT P.PaymentID, E.EventName, PT.FirstName, P.Amount, P.PaymentStatus
+-- FROM Payment P
+-- JOIN Booking B ON P.BookingID = B.BookingID
+-- JOIN Event E ON B.EventID = E.EventID
+-- JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;
+
+-- Seed default admin with blowfish hash
 INSERT INTO admins (name, email, phone_number, password_hash)
 VALUES (
     'System Admin',
@@ -92,7 +206,7 @@ VALUES (
     crypt('Deeku@9686', gen_salt('bf'))
 ) ON CONFLICT (email) DO NOTHING;
 
--- Secure authentication RPC function
+-- RPC secure authentication function
 CREATE OR REPLACE FUNCTION verify_admin_login(
     p_email TEXT,
     p_phone TEXT,
@@ -122,32 +236,29 @@ $$;
 -- Configure tables to permit secure public CRUD operations for front-end demo
 -- =========================================================================
 
--- Enable RLS on all tables
 ALTER TABLE services ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE Event ENABLE ROW LEVEL SECURITY;
+ALTER TABLE Participant ENABLE ROW LEVEL SECURITY;
+ALTER TABLE Payment ENABLE ROW LEVEL SECURITY;
+ALTER TABLE Booking ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inquiries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admins ENABLE ROW LEVEL SECURITY;
 
--- 1. Policies for 'services' table (Everyone can read, only admin can write)
-CREATE POLICY "Enable read access for all users on services" ON services
-    FOR SELECT USING (true);
+CREATE POLICY "Enable read access for all on services" ON services FOR SELECT USING (true);
+CREATE POLICY "Enable read access for all on Event" ON Event FOR SELECT USING (true);
+CREATE POLICY "Enable insert access for all on Event" ON Event FOR INSERT WITH CHECK (true);
 
--- 2. Policies for 'bookings' table (Everyone can execute full CRUD operations)
-CREATE POLICY "Enable select access for all users on bookings" ON bookings
-    FOR SELECT USING (true);
+CREATE POLICY "Enable select access for all on Participant" ON Participant FOR SELECT USING (true);
+CREATE POLICY "Enable insert access for all on Participant" ON Participant FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Enable insert access for all users on bookings" ON bookings
-    FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable select access for all on Payment" ON Payment FOR SELECT USING (true);
+CREATE POLICY "Enable insert access for all on Payment" ON Payment FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Enable update access for all users on bookings" ON bookings
-    FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Enable select access for all on Booking" ON Booking FOR SELECT USING (true);
+CREATE POLICY "Enable insert access for all on Booking" ON Booking FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable update access for all on Booking" ON Booking FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Enable delete access for all on Booking" ON Booking FOR DELETE USING (true);
 
-CREATE POLICY "Enable delete access for all users on bookings" ON bookings
-    FOR DELETE USING (true);
-
--- 3. Policies for 'inquiries' table (Everyone can select or insert new logs)
-CREATE POLICY "Enable insert access for all users on inquiries" ON inquiries
-    FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Enable select access for all users on inquiries" ON inquiries
-    FOR SELECT USING (true);
+CREATE POLICY "Enable insert access for all on inquiries" ON inquiries FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable select access for all on inquiries" ON inquiries FOR SELECT USING (true);
+CREATE POLICY "Enable update access for all on inquiries" ON inquiries FOR UPDATE USING (true) WITH CHECK (true);

@@ -44,25 +44,51 @@ const setLocalStorageDb = (key, data) => {
 const INITIAL_BOOKINGS = [
   {
     id: "b10f3c8a-de7e-4001-831e-45fa8f01b0f1",
-    client_name: "Dr. Roberts (HOD)",
-    client_email: "roberts.hod@university.edu",
+    client_name: "Arjun Sharma",
+    client_email: "arjun@student.edu",
     event_date: "2026-06-15",
     event_type: "college",
     guest_count: 500,
     selected_services: ["speakers", "lights", "artist", "vr", "emcee"],
     total_price: 547800, // 6600 * 83
+    status: "Shortlisted",
     created_at: new Date(Date.now() - 86400000 * 2).toISOString()
   },
   {
     id: "c29e2f9d-cd8d-4f1b-9e2c-341af802f0a2",
-    client_name: "Sarah Jenkins",
-    client_email: "sarah.wedding@gmail.com",
+    client_name: "Priya Nair",
+    client_email: "priya@student.edu",
     event_date: "2026-08-22",
     event_type: "marriage",
     guest_count: 350,
     selected_services: ["infra", "catering", "photos", "lights", "valet"],
     total_price: 1149550, // 13850 * 83
+    status: "Applied",
     created_at: new Date(Date.now() - 86400000 * 5).toISOString()
+  },
+  {
+    id: "d30f4e9a-fe8e-5002-942f-56fa9f02c0c3",
+    client_name: "Ravi Kumar",
+    client_email: "ravi@student.edu",
+    event_date: "2026-07-10",
+    event_type: "college",
+    guest_count: 200,
+    selected_services: ["speakers", "lights", "emcee"],
+    total_price: 247800,
+    status: "Applied",
+    created_at: new Date(Date.now() - 86400000 * 3).toISOString()
+  },
+  {
+    id: "e40g5f0b-af9f-6003-a53g-67fa0f03d0d4",
+    client_name: "Priya Nair",
+    client_email: "priya@student.edu",
+    event_date: "2026-09-05",
+    event_type: "concerts",
+    guest_count: 800,
+    selected_services: ["speakers", "lights", "artist", "security", "drones"],
+    total_price: 747800,
+    status: "Selected",
+    created_at: new Date(Date.now() - 86400000 * 1).toISOString()
   }
 ];
 
@@ -73,7 +99,16 @@ const INITIAL_INQUIRIES = [
     rep_name: "Event Chair Mark",
     email: "mark.chair@fests.org",
     specs_notes: "Requesting custom quote for stadium sports concert setup. Need sound arrays and RFID entry portals.",
+    status: "Applied",
     created_at: new Date(Date.now() - 86400000).toISOString()
+  },
+  {
+    id: "i13b5c9d-df8f-5f3b-90b2-66fe9f02b0fa",
+    rep_name: "Sneha Patel",
+    email: "sneha@student.edu",
+    specs_notes: "Requesting sound barrier length details and 500W speaker layouts for the outdoor lawn party.",
+    status: "Interview Scheduled",
+    created_at: new Date(Date.now() - 86400000 * 2).toISOString()
   }
 ];
 
@@ -154,14 +189,80 @@ export const supabaseClient = {
   // -------------------------------------------------------------
   // CRUD - BOOKINGS
   // -------------------------------------------------------------
+  // -------------------------------------------------------------
   fetchBookings: async () => {
     if (supabase) {
       try {
         const { data, error } = await supabase
-          .from('bookings')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (!error && data) return data;
+          .from('Booking')
+          .select(`
+            BookingID,
+            BookingDate,
+            BookingStatus,
+            TotalAmount,
+            Event (
+              EventID,
+              EventName,
+              EventDate,
+              Location,
+              Capacity,
+              TicketPrice
+            ),
+            Participant (
+              ParticipantID,
+              FirstName,
+              LastName,
+              Email,
+              Phone,
+              Address
+            ),
+            Payment (
+              PaymentID,
+              Amount,
+              PaymentStatus
+            )
+          `)
+          .order('BookingDate', { ascending: false });
+
+        if (!error && data) {
+          // Map database relational structure to the flat format expected by the frontend
+          return data.map(b => {
+            const part = b.Participant || {};
+            const ev = b.Event || {};
+            const payments = b.Payment || [];
+            const pay = Array.isArray(payments) ? (payments[0] || {}) : (payments || {});
+
+            let eventType = 'college';
+            const nameLower = (ev.EventName || '').toLowerCase();
+            if (nameLower.includes('cultural') || nameLower.includes('fest')) {
+              eventType = 'marriage';
+            } else if (nameLower.includes('coding') || nameLower.includes('workshop')) {
+              eventType = 'concerts';
+            } else if (nameLower.includes('conference') || nameLower.includes('tech')) {
+              eventType = 'corporate';
+            }
+
+            return {
+              id: b.BookingID,
+              client_name: part.FirstName ? `${part.FirstName} ${part.LastName || ''}`.trim() : 'Unknown Client',
+              client_email: part.Email || 'unknown@client.com',
+              event_date: ev.EventDate || b.BookingDate,
+              event_type: eventType,
+              guest_count: 1,
+              selected_services: ['speakers', 'lights'],
+              total_price: Number(b.TotalAmount || pay.Amount || 0),
+              status: b.BookingStatus || 'Confirmed',
+              created_at: b.BookingDate,
+              participant_id: part.ParticipantID,
+              payment_id: pay.PaymentID,
+              event_id: ev.EventID,
+              participant_phone: part.Phone || '',
+              participant_address: part.Address || '',
+              event_venue: ev.Location || '',
+              payment_status: pay.PaymentStatus || 'Paid'
+            };
+          });
+        }
         console.warn("Failed fetching Supabase bookings:", error);
       } catch (err) {
         console.warn("Supabase bookings catch-all failure:", err);
@@ -172,81 +273,195 @@ export const supabaseClient = {
 
   insertBooking: async (booking) => {
     const newId = crypto.randomUUID();
-    const newRecord = {
+    const flatRecord = {
       id: newId,
       client_name: booking.clientName,
       client_email: booking.clientEmail,
       event_date: booking.eventDate,
       event_type: booking.eventType,
-      guest_count: Number(booking.guestCount),
+      guest_count: Number(booking.guestCount || 1),
       selected_services: booking.selectedServices,
       total_price: Number(booking.totalPrice),
+      status: booking.status || 'Confirmed',
       created_at: new Date().toISOString()
     };
 
     if (supabase) {
       try {
-        const { data, error } = await supabase
-          .from('bookings')
-          .insert([newRecord])
+        // 1. Map Event Type to event_id from seeds
+        let eventId = 1;
+        if (booking.eventType === 'marriage') eventId = 2;
+        else if (booking.eventType === 'concerts') eventId = 3;
+
+        // 2. Insert or find participant in Participant table
+        const names = (booking.clientName || 'Rahul Sharma').trim().split(/\s+/);
+        const firstName = names[0] || 'Unknown';
+        const lastName = names.slice(1).join(' ') || 'Client';
+        
+        const newParticipant = {
+          FirstName: firstName,
+          LastName: lastName,
+          Email: booking.clientEmail,
+          Phone: booking.phone || '9876543210',
+          Address: booking.city ? `${booking.city}, ${booking.state || ''}` : 'Bangalore'
+        };
+
+        let participantId = 1;
+        const { data: partData, error: partError } = await supabase
+          .from('Participant')
+          .upsert([newParticipant], { onConflict: 'Email' })
           .select();
-        if (!error) return { success: true, data: data[0] };
-        console.warn("Supabase insert error:", error);
+
+        if (!partError && partData && partData.length > 0) {
+          participantId = partData[0].ParticipantID;
+        }
+
+        // 3. Insert booking row
+        const newBooking = {
+          EventID: eventId,
+          ParticipantID: participantId,
+          BookingStatus: booking.status || 'Confirmed',
+          TotalAmount: Number(booking.totalPrice)
+        };
+
+        const { data: bData, error: bError } = await supabase
+          .from('Booking')
+          .insert([newBooking])
+          .select();
+
+        if (!bError && bData && bData.length > 0) {
+          const bookingId = bData[0].BookingID;
+
+          // 4. Insert payment row
+          const newPayment = {
+            BookingID: bookingId,
+            Amount: Number(booking.totalPrice),
+            PaymentStatus: 'Paid'
+          };
+          await supabase
+            .from('Payment')
+            .insert([newPayment]);
+
+          flatRecord.id = bookingId;
+          return { success: true, data: flatRecord };
+        }
+        console.warn("Supabase relational insert error:", bError);
       } catch (err) {
-        console.warn("Supabase insert failure:", err);
+        console.warn("Supabase relational insert exception:", err);
       }
     }
 
     // Local Storage insertion fallback
     const list = getLocalStorageDb('bookings', INITIAL_BOOKINGS);
-    list.unshift(newRecord);
+    list.unshift(flatRecord);
     setLocalStorageDb('bookings', list);
-    return { success: true, data: newRecord };
+    return { success: true, data: flatRecord };
   },
 
   updateBooking: async (id, updatedFields) => {
-    // Map camelCase fields to snake_case fields
-    const dbFields = {};
-    if (updatedFields.clientName) dbFields.client_name = updatedFields.clientName;
-    if (updatedFields.clientEmail) dbFields.client_email = updatedFields.clientEmail;
-    if (updatedFields.eventDate) dbFields.event_date = updatedFields.eventDate;
-    if (updatedFields.eventType) dbFields.event_type = updatedFields.eventType;
-    if (updatedFields.guestCount) dbFields.guest_count = Number(updatedFields.guestCount);
-    if (updatedFields.selectedServices) dbFields.selected_services = updatedFields.selectedServices;
-    if (updatedFields.totalPrice) dbFields.total_price = Number(updatedFields.totalPrice);
+    // Map camelCase fields
+    const flatFields = {};
+    if (updatedFields.clientName) flatFields.client_name = updatedFields.clientName;
+    if (updatedFields.clientEmail) flatFields.client_email = updatedFields.clientEmail;
+    if (updatedFields.eventDate) flatFields.event_date = updatedFields.eventDate;
+    if (updatedFields.eventType) flatFields.event_type = updatedFields.eventType;
+    if (updatedFields.guestCount) flatFields.guest_count = Number(updatedFields.guestCount);
+    if (updatedFields.selectedServices) flatFields.selected_services = updatedFields.selectedServices;
+    if (updatedFields.totalPrice) flatFields.total_price = Number(updatedFields.totalPrice);
+    if (updatedFields.status) flatFields.status = updatedFields.status;
 
-    if (supabase) {
+    if (supabase && !isNaN(id)) {
       try {
-        const { data, error } = await supabase
-          .from('bookings')
+        // Query the Participant ID currently associated with this booking
+        const { data: currentB, error: qErr } = await supabase
+          .from('Booking')
+          .select('ParticipantID')
+          .eq('BookingID', id)
+          .single();
+
+        if (!qErr && currentB) {
+          // Update Participant
+          if (updatedFields.clientName) {
+            const names = (updatedFields.clientName || '').trim().split(/\s+/);
+            const firstName = names[0] || 'Unknown';
+            const lastName = names.slice(1).join(' ') || 'Client';
+            await supabase
+              .from('Participant')
+              .update({
+                FirstName: firstName,
+                LastName: lastName,
+                Email: updatedFields.clientEmail
+              })
+              .eq('ParticipantID', currentB.ParticipantID);
+          }
+        }
+
+        // Update Booking row
+        let eventId = 1;
+        if (updatedFields.eventType === 'marriage') eventId = 2;
+        else if (updatedFields.eventType === 'concerts') eventId = 3;
+
+        const dbFields = {};
+        if (updatedFields.status) dbFields.BookingStatus = updatedFields.status;
+        if (updatedFields.eventType) dbFields.EventID = eventId;
+        if (updatedFields.totalPrice) dbFields.TotalAmount = Number(updatedFields.totalPrice);
+
+        const { data: bData, error: bError } = await supabase
+          .from('Booking')
           .update(dbFields)
-          .eq('id', id)
+          .eq('BookingID', id)
           .select();
-        if (!error) return { success: true, data: data[0] };
-        console.warn("Supabase update error:", error);
+
+        if (!bError && bData && bData.length > 0) {
+          return { success: true, data: flatFields };
+        }
+        console.warn("Supabase relational update error:", bError);
       } catch (err) {
-        console.warn("Supabase update failure:", err);
+        console.warn("Supabase relational update exception:", err);
       }
     }
 
     // Local Storage update fallback
     const list = getLocalStorageDb('bookings', INITIAL_BOOKINGS);
-    const index = list.findIndex(b => b.id === id);
+    const index = list.findIndex(b => String(b.id) === String(id));
     if (index !== -1) {
-      list[index] = { ...list[index], ...dbFields };
+      list[index] = { ...list[index], ...flatFields };
       setLocalStorageDb('bookings', list);
       return { success: true, data: list[index] };
     }
     return { success: false, error: "Record not found" };
   },
 
+  updateBookingStatus: async (id, status) => {
+    if (supabase && !isNaN(id)) {
+      try {
+        const { data, error } = await supabase
+          .from('Booking')
+          .update({ BookingStatus: status })
+          .eq('BookingID', id)
+          .select();
+        if (!error && data && data.length > 0) return { success: true, data: data[0] };
+      } catch (err) {
+        console.warn("Supabase updateBookingStatus exception:", err);
+      }
+    }
+    const list = getLocalStorageDb('bookings', INITIAL_BOOKINGS);
+    const index = list.findIndex(b => String(b.id) === String(id));
+    if (index !== -1) {
+      list[index].status = status;
+      setLocalStorageDb('bookings', list);
+      return { success: true, data: list[index] };
+    }
+    return { success: false };
+  },
+
   deleteBooking: async (id) => {
-    if (supabase) {
+    if (supabase && !isNaN(id)) {
       try {
         const { error } = await supabase
-          .from('bookings')
+          .from('Booking')
           .delete()
-          .eq('id', id);
+          .eq('BookingID', id);
         if (!error) return { success: true };
         console.warn("Supabase delete error:", error);
       } catch (err) {
@@ -256,7 +471,7 @@ export const supabaseClient = {
 
     // Local Storage delete fallback
     const list = getLocalStorageDb('bookings', INITIAL_BOOKINGS);
-    const filtered = list.filter(b => b.id !== id);
+    const filtered = list.filter(b => String(b.id) !== String(id));
     setLocalStorageDb('bookings', filtered);
     return { success: true };
   },
@@ -264,12 +479,29 @@ export const supabaseClient = {
   // -------------------------------------------------------------
   // CRUD - INQUIRIES
   // -------------------------------------------------------------
+  fetchInquiries: async () => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('inquiries')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (!error && data) return data;
+        console.warn("Failed fetching Supabase inquiries:", error);
+      } catch (err) {
+        console.warn("Supabase inquiries exception:", err);
+      }
+    }
+    return getLocalStorageDb('inquiries', INITIAL_INQUIRIES);
+  },
+
   insertInquiry: async (inquiry) => {
     const newRecord = {
       id: crypto.randomUUID(),
       rep_name: inquiry.repName,
       email: inquiry.email,
       specs_notes: inquiry.specsNotes,
+      status: inquiry.status || 'Applied',
       created_at: new Date().toISOString()
     };
 
@@ -289,6 +521,29 @@ export const supabaseClient = {
     list.unshift(newRecord);
     setLocalStorageDb('inquiries', list);
     return { success: true };
+  },
+
+  updateInquiryStatus: async (id, status) => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('inquiries')
+          .update({ status })
+          .eq('id', id)
+          .select();
+        if (!error) return { success: true, data: data[0] };
+      } catch (err) {
+        console.warn("Supabase updateInquiryStatus exception:", err);
+      }
+    }
+    const list = getLocalStorageDb('inquiries', INITIAL_INQUIRIES);
+    const index = list.findIndex(i => i.id === id);
+    if (index !== -1) {
+      list[index].status = status;
+      setLocalStorageDb('inquiries', list);
+      return { success: true, data: list[index] };
+    }
+    return { success: false };
   },
 
   // -------------------------------------------------------------

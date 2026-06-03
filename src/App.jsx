@@ -299,9 +299,11 @@ function App() {
   // Chatbot floating assistant states
   const [isChatbotOpen, setIsChatbotOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
+  const [chatbotTyping, setChatbotTyping] = useState(false);
   const [chatbotMessages, setChatbotMessages] = useState([
-    { id: 1, text: "Hello! I am AuraBot 🤖, your smart SaaS DBMS Assistant. Ask me anything about our services catalog, bookings database table, or SQL structure!", sender: "bot" }
+    { id: 1, text: "Hello! I'm AuraBot 🤖 — your smart Event Management Assistant. Ask me about bookings, services, pricing, admin features, or how to use this platform!", sender: "bot" }
   ]);
+  const chatMessagesRef = React.useRef(null);
   
   // Live attendee count ticking up
   const [liveAttendeeCount, setLiveAttendeeCount] = useState(18427);
@@ -1122,29 +1124,109 @@ function App() {
   };
 
   // Chatbot floating assistant messenger
-  const handleChatSend = () => {
-    if (!chatInput.trim()) return;
-    const userMsg = { id: Date.now(), text: chatInput, sender: 'user' };
+  // Auto-scroll chat to bottom whenever messages change
+  React.useEffect(() => {
+    if (chatMessagesRef.current) {
+      chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
+    }
+  }, [chatbotMessages, chatbotTyping]);
+
+  const handleChatSend = (customText) => {
+    const textToSend = (typeof customText === 'string' && customText.trim()) ? customText : chatInput;
+    if (!textToSend.trim()) return;
+    const userMsg = { id: Date.now(), text: textToSend, sender: 'user' };
     setChatbotMessages(prev => [...prev, userMsg]);
     setChatInput('');
-    
+    setChatbotTyping(true);
+
     setTimeout(() => {
-      const text = chatInput.toLowerCase();
-      let reply = "I am here to help! Ask me about Supabase DB configurations, catalog services, SQL constraints, or bookings.";
-      if (text.includes('supabase') || text.includes('database') || text.includes('db')) {
-        reply = `Supabase PostgreSQL is our primary relational database. You can paste your custom Project URL and API Key in the setup banner above. All CRUD bookings and inquiries sync actively in real-time, backed up by localStorage sandbox logic!`;
-      } else if (text.includes('services') || text.includes('catalog') || text.includes('infra')) {
-        reply = `AuraEvents features 18 modular capability layers including Venue Tents, Sound Stage Arrays, Projection Lenses, and Drones. Standard items are flat rate, while custom catering, cleanup, and ticketing scale per guest dynamically!`;
-      } else if (text.includes('sql') || text.includes('constraint') || text.includes('ddl') || text.includes('date')) {
-        reply = `Our SQL schema defines a 'check_future_booking' CHECK constraint: 'CONSTRAINT check_future_booking CHECK (event_date >= CURRENT_DATE)'. This ensures past dates are rejected at the DBMS transaction level!`;
-      } else if (text.includes('price') || text.includes('rupee') || text.includes('inr')) {
-        reply = `All prices are dynamically converted from US Dollars to Indian Rupees (₹) using a standard 1 USD = 83 INR conversion rate, formatted in standard Indian en-IN Lakhs numbering system!`;
-      } else if (text.includes('hello') || text.includes('hi') || text.includes('hey')) {
-        reply = `Hello! How can I assist you with your college database project or AuraEvents SaaS setup today?`;
+      const text = textToSend.toLowerCase();
+      let reply = '';
+
+      // Greetings
+      if (text.match(/\b(hello|hi|hey|good morning|good evening|namaste|howdy)\b/)) {
+        reply = "Hello! 👋 Welcome to AuraEvents! I'm AuraBot, your AI assistant. You can ask me about:\n• 📅 Creating bookings\n• 🛠️ Event services & capabilities\n• 💰 Pricing & cost calculator\n• 🔐 Admin dashboard\n• 📩 Inquiries\n• 🗄️ Database (Supabase/SQL)";
       }
-      
+      // Booking related
+      else if (text.match(/\b(book|booking|reserve|reservation|ticket|event book|create booking|add booking)\b/)) {
+        reply = "📅 To create a booking:\n1. Go to the homepage\n2. Choose your event type (Wedding, College Fest, Concert, etc.)\n3. Select services from the catalog\n4. Click '📅 Reserve This Event'\n5. Fill in your name, email, phone & date\n6. Complete payment details\n\nBookings are saved to the Supabase PostgreSQL database in real-time!";
+      }
+      // Services / Capabilities
+      else if (text.match(/\b(service|services|catalog|capability|capabilities|infra|infrastructure|venue|tent|stage|sound|drone|lighting|decoration)\b/)) {
+        reply = "🛠️ AuraEvents offers 18+ capability services including:\n• 🏟️ Venue Tents & Stages\n• 🔊 Sound Arrays & PA Systems\n• 📽️ Projection & LED Screens\n• 🍽️ Catering & Food Stations\n• 🚁 Drone Coverage\n• 💡 Neon Lighting & SFX\n• 🎫 RFID Gate Access & Ticketing\n• 🧹 Post-Event Cleanup\n\nAdmin can add new capabilities in the Admin Dashboard → Capabilities Catalog tab.";
+      }
+      // Pricing / Cost
+      else if (text.match(/\b(price|pricing|cost|rupee|inr|₹|amount|fee|charge|rate|how much|expensive|cheap)\b/)) {
+        reply = "💰 Pricing Info:\n• All prices are in Indian Rupees (₹)\n• Standard services: Flat fee (e.g. ₹8,300 for Venue Tent)\n• Dynamic services: Per-guest pricing (e.g. ₹830/attendee for Catering)\n• Use the Cost Calculator on the homepage to estimate your total\n• A 5% platform fee is added at checkout\n\nTip: More guests + more services = better deals on per-guest items!";
+      }
+      // Admin / Dashboard
+      else if (text.match(/\b(admin|dashboard|login|sign in|access|password|credentials|portal|manage|management)\b/)) {
+        reply = "🔐 Admin Dashboard Features:\n• 📊 Overview stats (bookings, revenue, inquiries)\n• 📅 Manage all bookings (Edit/Delete/Status)\n• 🛠️ Capabilities Catalog (Add/Delete services)\n• 📩 Inquiries management (status updates)\n• 🗄️ SQL Logs (live DBMS transaction history)\n\nTo access: Click 'Admin Access' in the top navigation bar and log in with your credentials.";
+      }
+      // Inquiries
+      else if (text.match(/\b(inquiry|inquiries|enquiry|enquiries|contact|message|form|question|feedback|request|bespoke|custom)\b/)) {
+        reply = "📩 Inquiry System:\n• Customers can submit custom event requests via the 'Contact & Inquiries' section\n• Each inquiry captures: name, email, phone, event type, date, guest count & message\n• Status values: Received → Under Review → Contacted → Approved / Declined\n• Admins can update status or delete inquiries in the Admin Dashboard → Inquiries tab";
+      }
+      // Supabase / Database
+      else if (text.match(/\b(supabase|database|db|postgresql|postgres|sql|schema|table|query|connect|connection|api key)\b/)) {
+        reply = "🗄️ Database Setup (Supabase):\n1. Create a free project at supabase.com\n2. Copy your Project URL and anon API key\n3. Click '⚙️ Connect Database' in the top bar\n4. Paste your credentials and save\n\nAll bookings, inquiries, services and events will then sync to your live PostgreSQL database in real-time!\n\nCurrently running in Sandbox mode? Data is stored in localStorage as backup.";
+      }
+      // SQL specific
+      else if (text.match(/\b(constraint|ddl|trigger|foreign key|primary key|check|index|join|transaction)\b/)) {
+        reply = "📐 SQL Schema Highlights:\n• CHECK constraint: event_date >= CURRENT_DATE (rejects past dates)\n• Foreign Keys: Booking → Event, Participant, Payment\n• Booking status ENUM: 'Pending', 'Confirmed', 'Cancelled'\n• Inquiry status: 'Received', 'Under Review', 'Contacted', 'Approved', 'Declined'\n\nView live SQL logs in Admin → SQL Logs tab to see every INSERT/UPDATE/DELETE!";
+      }
+      // Events / Event types
+      else if (text.match(/\b(wedding|marriage|college|fest|festival|concert|corporate|conference|event type)\b/)) {
+        reply = "🎉 Supported Event Types:\n• 💍 Wedding & Marriage Ceremonies\n• 🎓 College Cultural Fests\n• 🎵 Music Concerts & Live Shows\n• 🏢 Corporate Conferences & Summits\n\nEach event type has a recommended service package. Select your type on the homepage calculator to see tailored suggestions!";
+      }
+      // Account / Sign up / Sign in
+      else if (text.match(/\b(account|sign up|register|create account|signup|profile|user)\b/)) {
+        reply = "👤 User Accounts:\n• Click 'Sign In' in the top navigation\n• New users: Click 'Create Account' and fill in your details\n• Once logged in, you can track your bookings under 'My Bookings'\n• Admins get access to the full dashboard with CRUD operations";
+      }
+      // Edit booking
+      else if (text.match(/\b(edit|update|change|modify|cancel|delete|remove|annul)\b/) && text.match(/\b(booking|reservation|event)\b/)) {
+        reply = "✏️ Editing Bookings (Admin only):\n1. Go to Admin Dashboard → Bookings tab\n2. Find the booking row\n3. Click 'Edit' to update name, date, services or guest count\n4. Use Status dropdown to change: Pending → Confirmed → Cancelled\n5. Click 'Annul' to permanently delete a booking from the database";
+      }
+      // Calculator
+      else if (text.match(/\b(calculator|estimate|total|calculate|budget|plan)\b/)) {
+        reply = "🧮 Cost Calculator:\n• Found on the homepage\n• Select event type → set guest count → choose add-on services\n• Real-time price updates as you select\n• Includes a 5% platform service fee\n• Click 'Reserve This Event' when ready to book!";
+      }
+      // Payment
+      else if (text.match(/\b(payment|pay|card|credit|debit|upi|gpay|razorpay|checkout|billing)\b/)) {
+        reply = "💳 Payment at Checkout:\n• Fill in card number, expiry date, CVV & cardholder name\n• Payment is processed at Step 2 of the booking flow\n• On success, a QR code ticket is generated for your booking\n• Payment status is stored in the database as 'Paid'";
+      }
+      // Status
+      else if (text.match(/\b(status|pending|confirmed|cancelled|received|approved|declined|under review)\b/)) {
+        reply = "📊 Status Values:\n\nBooking Status:\n• ⏳ Pending — awaiting confirmation\n• ✅ Confirmed — booking approved\n• ❌ Cancelled — booking cancelled\n\nInquiry Status:\n• 📥 Received → 🔍 Under Review → 📞 Contacted → ✅ Approved / ❌ Declined\n\nAdmins can update these from the Admin Dashboard dropdown menus.";
+      }
+      // QR / Ticket
+      else if (text.match(/\b(qr|qr code|ticket|receipt|confirmation|download)\b/)) {
+        reply = "🎫 After a successful booking, a QR code ticket is automatically generated! It includes:\n• Your booking ID\n• Event type & date\n• Guest count\n• Total amount paid\n\nYou can screenshot or save it as your event pass.";
+      }
+      // Help / What can you do
+      else if (text.match(/\b(help|what can you do|features|capabilities|options|commands|topics)\b/)) {
+        reply = "🤖 I can help you with:\n\n📅 Bookings — create, edit, cancel\n🛠️ Services — catalog, capabilities\n💰 Pricing — cost estimation, INR rates\n🔐 Admin — dashboard, login, CRUD\n📩 Inquiries — submit, manage\n🗄️ Database — Supabase, SQL, schema\n🎉 Events — types, wedding, fest, concert\n💳 Payments — checkout, card, QR ticket\n\nJust ask me anything!";
+      }
+      // Thanks
+      else if (text.match(/\b(thank|thanks|thankyou|thank you|thx|great|awesome|perfect|good|nice)\b/)) {
+        reply = "You're welcome! 😊 Is there anything else I can help you with about AuraEvents? I'm always here to assist!";
+      }
+      // Default fallback
+      else {
+        const suggestions = [
+          "💡 Try asking: 'How do I create a booking?'",
+          "💡 Try asking: 'What services are available?'",
+          "💡 Try asking: 'How does pricing work?'",
+          "💡 Try asking: 'How do I access the admin dashboard?'",
+          "💡 Try asking: 'How to connect my Supabase database?'",
+        ];
+        const randomSuggestion = suggestions[Math.floor(Math.random() * suggestions.length)];
+        reply = `I'm not sure about that specific query. 🤔\n\n${randomSuggestion}\n\nOr type 'help' to see all topics I can assist with!`;
+      }
+
+      setChatbotTyping(false);
       setChatbotMessages(prev => [...prev, { id: Date.now() + 1, text: reply, sender: 'bot' }]);
-    }, 400);
+    }, 900);
   };
 
   // Reset calculator states when closing booking successful window
@@ -5270,11 +5352,43 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
               </button>
             </div>
             
-            <div className="chat-messages">
+            <div className="chat-messages" ref={chatMessagesRef}>
               {chatbotMessages.map(msg => (
-                <div key={msg.id} className={`chat-message ${msg.sender}`}>
+                <div key={msg.id} className={`chat-message ${msg.sender}`} style={{ whiteSpace: 'pre-wrap' }}>
                   {msg.text}
                 </div>
+              ))}
+              {chatbotTyping && (
+                <div className="chat-message bot" style={{ display: 'flex', gap: '4px', alignItems: 'center', padding: '0.65rem 0.85rem' }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent-primary)', animation: 'typingDot 1.2s infinite ease-in-out' }}></span>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent-primary)', animation: 'typingDot 1.2s infinite ease-in-out 0.2s' }}></span>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent-primary)', animation: 'typingDot 1.2s infinite ease-in-out 0.4s' }}></span>
+                </div>
+              )}
+            </div>
+
+            {/* Quick reply chips */}
+            <div style={{ display: 'flex', gap: '0.4rem', padding: '0 0.75rem 0.5rem', flexWrap: 'wrap' }}>
+              {['Bookings', 'Pricing', 'Services', 'Admin', 'Help'].map(chip => (
+                <button
+                  key={chip}
+                  onClick={() => { handleChatSend(chip); }}
+                  style={{
+                    background: 'rgba(124,58,237,0.12)',
+                    border: '1px solid rgba(124,58,237,0.3)',
+                    color: 'var(--accent-text)',
+                    borderRadius: '99px',
+                    padding: '0.2rem 0.65rem',
+                    fontSize: '0.68rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={e => e.target.style.background = 'rgba(124,58,237,0.25)'}
+                  onMouseOut={e => e.target.style.background = 'rgba(124,58,237,0.12)'}
+                >
+                  {chip}
+                </button>
               ))}
             </div>
 

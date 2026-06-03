@@ -3711,3 +3711,10 @@ body, div, header, section, footer, article, table, tr, td, th, input, select, t
   }
 }
 
+/* AI Chatbot typing indicator dot animation */
+@keyframes typingDot {
+  0%, 100% { transform: translateY(0); opacity: 0.4; }
+  50% { transform: translateY(-4px); opacity: 1; }
+}
+
+

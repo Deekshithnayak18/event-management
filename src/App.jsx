@@ -4252,19 +4252,21 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                                         }
                                       }}
                                       style={{
-                                        background: 'rgba(255,255,255,0.05)',
-                                        color: 'var(--text-primary)',
-                                        border: '1px solid var(--border-glass)',
-                                        borderRadius: '4px',
-                                        padding: '0.25rem 0.5rem',
+                                        background: '#1e293b',
+                                        color: '#f8fafc',
+                                        border: '1px solid #334155',
+                                        borderRadius: '6px',
+                                        padding: '0.3rem 0.6rem',
                                         fontSize: '0.75rem',
                                         fontWeight: 600,
-                                        cursor: 'pointer'
+                                        cursor: 'pointer',
+                                        outline: 'none',
+                                        minWidth: '110px'
                                       }}
                                     >
-                                      <option value="Pending">Pending</option>
-                                      <option value="Confirmed">Confirmed</option>
-                                      <option value="Cancelled">Cancelled</option>
+                                      <option value="Pending" style={{ background: '#1e293b', color: '#f8fafc' }}>Pending</option>
+                                      <option value="Confirmed" style={{ background: '#1e293b', color: '#f8fafc' }}>Confirmed</option>
+                                      <option value="Cancelled" style={{ background: '#1e293b', color: '#f8fafc' }}>Cancelled</option>
                                     </select>
                                   )}
                                 </td>
@@ -4463,21 +4465,23 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                                         }
                                       }}
                                       style={{
-                                        background: 'rgba(255,255,255,0.05)',
-                                        color: 'var(--text-primary)',
-                                        border: '1px solid var(--border-glass)',
-                                        borderRadius: '4px',
-                                        padding: '0.2rem 0.4rem',
+                                        background: '#1e293b',
+                                        color: '#f8fafc',
+                                        border: '1px solid #334155',
+                                        borderRadius: '6px',
+                                        padding: '0.3rem 0.5rem',
                                         fontSize: '0.7rem',
                                         fontWeight: 600,
-                                        cursor: 'pointer'
+                                        cursor: 'pointer',
+                                        outline: 'none',
+                                        minWidth: '120px'
                                       }}
                                     >
-                                      <option value="Received">Received</option>
-                                      <option value="Under Review">Under Review</option>
-                                      <option value="Contacted">Contacted</option>
-                                      <option value="Approved">Approved</option>
-                                      <option value="Declined">Declined</option>
+                                      <option value="Received" style={{ background: '#1e293b', color: '#f8fafc' }}>Received</option>
+                                      <option value="Under Review" style={{ background: '#1e293b', color: '#f8fafc' }}>Under Review</option>
+                                      <option value="Contacted" style={{ background: '#1e293b', color: '#f8fafc' }}>Contacted</option>
+                                      <option value="Approved" style={{ background: '#1e293b', color: '#f8fafc' }}>Approved</option>
+                                      <option value="Declined" style={{ background: '#1e293b', color: '#f8fafc' }}>Declined</option>
                                     </select>
                                     <button 
                                       onClick={async () => {

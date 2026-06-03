@@ -1456,7 +1456,7 @@ function App() {
               <div className="stat-label">Satisfaction Rate</div>
             </div>
             <div className="stat-item">
-              <div className="stat-value" style={{fontSize: '1.8rem', lineHeight: '2.5rem'}}>₹ en-IN</div>
+              <div className="stat-value" style={{fontSize: '1.8rem', lineHeight: '2.5rem'}}>{formatDirectINR(dbMetrics.totalRevenue || 150000)}+</div>
               <div className="stat-label">Rupee Localization</div>
             </div>
           </div>
@@ -4066,119 +4066,6 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
         </div>
       )}
 
-      {/* SIMULATED USER SIGN IN PORTAL OVERLAY */}
-      {showAuthModal && (
-        <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
-          <div 
-            className="modal-content glass-panel" 
-            onClick={(e) => e.stopPropagation()}
-            style={{maxWidth: '28rem'}}
-          >
-            <button className="modal-close-btn" onClick={() => setShowAuthModal(false)}>✕</button>
-            
-            <div className="auth-tabs">
-              <button 
-                className={`auth-tab-btn ${authMode === 'login' ? 'active' : ''}`}
-                onClick={() => setAuthMode('login')}
-              >
-                Sign In
-              </button>
-              <button 
-                className={`auth-tab-btn ${authMode === 'register' ? 'active' : ''}`}
-                onClick={() => setAuthMode('register')}
-              >
-                Create Account
-              </button>
-            </div>
-
-            <form onSubmit={handleAuthSubmit} id="user-authentication-form">
-              {authMode === 'otp' ? (
-                <div style={{textAlign: 'center'}}>
-                  <span style={{fontSize: '2.5rem', display: 'block', marginBottom: '1rem'}}>🔑</span>
-                  <h3>Verify OTP Code</h3>
-                  <p style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem'}}>
-                    We've simulated sending a 4-digit security code to your email: <strong>{authEmail || 'evaluator@university.edu'}</strong>.
-                  </p>
-                  
-                  <div className="otp-box-grid">
-                    {[0, 1, 2, 3].map(i => (
-                      <input
-                        key={i}
-                        type="text"
-                        className="otp-input"
-                        id={`otp-char-${i}`}
-                        value={authOtp[i]}
-                        onChange={(e) => handleOtpChange(i, e.target.value)}
-                        maxLength="1"
-                        required
-                      />
-                    ))}
-                  </div>
-
-                  <button 
-                    type="submit" 
-                    className="btn btn-primary" 
-                    style={{width: '100%', justifyContent: 'center', marginTop: '1rem'}}
-                  >
-                    Confirm & Unlock Admin Dashboard
-                  </button>
-                </div>
-              ) : (
-                <div>
-                  {authMode === 'register' && (
-                    <div className="form-group">
-                      <label htmlFor="auth-name-input">Full Name</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        id="auth-name-input"
-                        placeholder="e.g. Professor Smith"
-                        value={authName}
-                        onChange={(e) => setAuthName(e.target.value)}
-                        required
-                      />
-                    </div>
-                  )}
-
-                  <div className="form-group" style={{marginTop: '1rem'}}>
-                    <label htmlFor="auth-email-input">E-mail Address</label>
-                    <input
-                      type="email"
-                      className="form-input"
-                      id="auth-email-input"
-                      placeholder="yourname@domain.com"
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <div className="form-group" style={{marginTop: '1rem'}}>
-                    <label htmlFor="auth-password-input">Password</label>
-                    <input
-                      type="password"
-                      className="form-input"
-                      id="auth-password-input"
-                      placeholder="••••••••"
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <button 
-                    type="submit" 
-                    className="btn btn-primary btn-glow" 
-                    style={{width: '100%', justifyContent: 'center', marginTop: '2rem'}}
-                  >
-                    {authMode === 'login' ? 'Proceed to Sign In' : 'Proceed to Sign Up'}
-                  </button>
-                </div>
-              )}
-            </form>
-          </div>
-        </div>
-      )}
         </>
       ) : (
         <main className="container" style={{ marginTop: '2rem' }}>
@@ -5029,6 +4916,120 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
             </div>
           )}
         </main>
+      )}
+
+      {/* SIMULATED USER SIGN IN PORTAL OVERLAY */}
+      {showAuthModal && (
+        <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
+          <div 
+            className="modal-content glass-panel" 
+            onClick={(e) => e.stopPropagation()}
+            style={{maxWidth: '28rem'}}
+          >
+            <button className="modal-close-btn" onClick={() => setShowAuthModal(false)}>✕</button>
+            
+            <div className="auth-tabs">
+              <button 
+                className={`auth-tab-btn ${authMode === 'login' ? 'active' : ''}`}
+                onClick={() => setAuthMode('login')}
+              >
+                Sign In
+              </button>
+              <button 
+                className={`auth-tab-btn ${authMode === 'register' ? 'active' : ''}`}
+                onClick={() => setAuthMode('register')}
+              >
+                Create Account
+              </button>
+            </div>
+
+            <form onSubmit={handleAuthSubmit} id="user-authentication-form">
+              {authMode === 'otp' ? (
+                <div style={{textAlign: 'center'}}>
+                  <span style={{fontSize: '2.5rem', display: 'block', marginBottom: '1rem'}}>🔑</span>
+                  <h3>Verify OTP Code</h3>
+                  <p style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem'}}>
+                    We've simulated sending a 4-digit security code to your email: <strong>{authEmail || 'evaluator@university.edu'}</strong>.
+                  </p>
+                  
+                  <div className="otp-box-grid">
+                    {[0, 1, 2, 3].map(i => (
+                      <input
+                        key={i}
+                        type="text"
+                        className="otp-input"
+                        id={`otp-char-${i}`}
+                        value={authOtp[i]}
+                        onChange={(e) => handleOtpChange(i, e.target.value)}
+                        maxLength="1"
+                        required
+                      />
+                    ))}
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary" 
+                    style={{width: '100%', justifyContent: 'center', marginTop: '1rem'}}
+                  >
+                    Confirm & Unlock Admin Dashboard
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  {authMode === 'register' && (
+                    <div className="form-group">
+                      <label htmlFor="auth-name-input">Full Name</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        id="auth-name-input"
+                        placeholder="e.g. Professor Smith"
+                        value={authName}
+                        onChange={(e) => setAuthName(e.target.value)}
+                        required
+                      />
+                    </div>
+                  )}
+
+                  <div className="form-group" style={{marginTop: '1rem'}}>
+                    <label htmlFor="auth-email-input">E-mail Address</label>
+                    <input
+                      type="email"
+                      className="form-input"
+                      id="auth-email-input"
+                      placeholder="yourname@domain.com"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group" style={{marginTop: '1rem'}}>
+                    <label htmlFor="auth-password-input">Password</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      id="auth-password-input"
+                      placeholder="••••••••"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary btn-glow" 
+                    style={{width: '100%', justifyContent: 'center', marginTop: '2rem'}}
+                  >
+                    {authMode === 'login' ? 'Proceed to Sign In' : 'Proceed to Sign Up'}
+                  </button>
+                </div>
+              )}
+            </form>
+          </div>
+        </div>
       )}
 
       {/* SESSION TIMEOUT WARNING TOAST POPUP */}

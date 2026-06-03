@@ -3285,93 +3285,6 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
          MODALS & OVERLAYS PORTALS
          ------------------------------------------------------------- */}
 
-      {/* ADMIN ADD SERVICE MODAL */}
-      {showAddServiceModal && (
-        <div className="modal-overlay" onClick={() => setShowAddServiceModal(false)}>
-          <div className="modal-content glass-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '30rem' }}>
-            <button className="modal-close-btn" onClick={() => setShowAddServiceModal(false)}>✕</button>
-            <div className="modal-header">
-              <h3>Add Custom Capability Service</h3>
-              <p>Insert a new row catalog specification dynamically into database listings.</p>
-            </div>
-            <form onSubmit={handleAddService}>
-              <div className="form-group">
-                <label>Service ID Key (Lowercase, unique)</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  placeholder="e.g. laser" 
-                  value={newServiceId}
-                  onChange={(e) => setNewServiceId(e.target.value.toLowerCase())}
-                  required 
-                />
-              </div>
-              <div className="form-group" style={{ marginTop: '0.75rem' }}>
-                <label>Service Title Name</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  placeholder="e.g. Neon Laser Show" 
-                  value={newServiceTitle}
-                  onChange={(e) => setNewServiceTitle(e.target.value)}
-                  required 
-                />
-              </div>
-              <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
-                <div className="form-group">
-                  <label>Base Price ($)</label>
-                  <input 
-                    type="number" 
-                    className="form-input" 
-                    value={newServiceBasePrice}
-                    onChange={(e) => setNewServiceBasePrice(e.target.value)}
-                    required 
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Pricing Model</label>
-                  <select 
-                    className="form-input" 
-                    value={newServicePricingModel}
-                    onChange={(e) => setNewServicePricingModel(e.target.value)}
-                    style={{ background: 'var(--bg-deep)' }}
-                  >
-                    <option value="flat">flat fee</option>
-                    <option value="per-guest">per-guest fee</option>
-                  </select>
-                </div>
-              </div>
-              <div className="form-group" style={{ marginTop: '0.75rem' }}>
-                <label>Category Group</label>
-                <select 
-                  className="form-input" 
-                  value={newServiceCategory}
-                  onChange={(e) => setNewServiceCategory(e.target.value)}
-                  style={{ background: 'var(--bg-deep)' }}
-                >
-                  <option value="Infrastructure">Infrastructure</option>
-                  <option value="AV & Sound">AV & Sound</option>
-                  <option value="Food & Talent">Food & Talent</option>
-                  <option value="Logistics & Tech">Logistics & Tech</option>
-                </select>
-              </div>
-              <div className="form-group" style={{ marginTop: '0.75rem' }}>
-                <label>Description (Simple language)</label>
-                <textarea 
-                  className="form-input" 
-                  placeholder="Brief service description..." 
-                  value={newServiceDesc}
-                  onChange={(e) => setNewServiceDesc(e.target.value)}
-                  required
-                ></textarea>
-              </div>
-              <button type="submit" className="btn btn-primary btn-glow" style={{ width: '100%', justifyContent: 'center', marginTop: '1.25rem' }}>
-                Publish Capability to Catalog
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* CREDENTIALS DYNAMIC PORTAL OVERLAY */}
       {showCredentialsPortal && (
@@ -4609,6 +4522,95 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
             </div>
           )}
         </main>
+      )}
+
+      {/* ADMIN ADD CAPABILITY SERVICE MODAL - Global scope so it works from Admin Dashboard */}
+      {showAddServiceModal && (
+        <div className="modal-overlay" onClick={() => setShowAddServiceModal(false)}>
+          <div className="modal-content glass-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '30rem' }}>
+            <button className="modal-close-btn" onClick={() => setShowAddServiceModal(false)}>✕</button>
+            <div className="modal-header">
+              <h3>Add Custom Capability Service</h3>
+              <p>Insert a new row catalog specification dynamically into database listings.</p>
+            </div>
+            <form onSubmit={handleAddService}>
+              <div className="form-group">
+                <label>Service ID Key (Lowercase, unique)</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="e.g. laser" 
+                  value={newServiceId}
+                  onChange={(e) => setNewServiceId(e.target.value.toLowerCase())}
+                  required 
+                />
+              </div>
+              <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                <label>Service Title Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="e.g. Neon Laser Show" 
+                  value={newServiceTitle}
+                  onChange={(e) => setNewServiceTitle(e.target.value)}
+                  required 
+                />
+              </div>
+              <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
+                <div className="form-group">
+                  <label>Base Price (₹)</label>
+                  <input 
+                    type="number" 
+                    className="form-input" 
+                    placeholder="e.g. 5000"
+                    value={newServiceBasePrice}
+                    onChange={(e) => setNewServiceBasePrice(e.target.value)}
+                    required 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Pricing Model</label>
+                  <select 
+                    className="form-input" 
+                    value={newServicePricingModel}
+                    onChange={(e) => setNewServicePricingModel(e.target.value)}
+                    style={{ background: '#1e293b', color: '#f8fafc' }}
+                  >
+                    <option value="flat" style={{ background: '#1e293b', color: '#f8fafc' }}>Flat Fee</option>
+                    <option value="per-guest" style={{ background: '#1e293b', color: '#f8fafc' }}>Per-Guest Fee</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                <label>Category Group</label>
+                <select 
+                  className="form-input" 
+                  value={newServiceCategory}
+                  onChange={(e) => setNewServiceCategory(e.target.value)}
+                  style={{ background: '#1e293b', color: '#f8fafc' }}
+                >
+                  <option value="Infrastructure" style={{ background: '#1e293b', color: '#f8fafc' }}>Infrastructure</option>
+                  <option value="AV & Sound" style={{ background: '#1e293b', color: '#f8fafc' }}>AV &amp; Sound</option>
+                  <option value="Food & Talent" style={{ background: '#1e293b', color: '#f8fafc' }}>Food &amp; Talent</option>
+                  <option value="Logistics & Tech" style={{ background: '#1e293b', color: '#f8fafc' }}>Logistics &amp; Tech</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                <label>Description</label>
+                <textarea 
+                  className="form-input" 
+                  placeholder="Brief service description..." 
+                  value={newServiceDesc}
+                  onChange={(e) => setNewServiceDesc(e.target.value)}
+                  required
+                ></textarea>
+              </div>
+              <button type="submit" className="btn btn-primary btn-glow" style={{ width: '100%', justifyContent: 'center', marginTop: '1.25rem' }}>
+                Publish Capability to Catalog
+              </button>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* CREATE BOOKING RESERVATION OVERLAY WITH MULTI-STEP CHECKOUT AND QR CODE TICKET */}

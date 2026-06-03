@@ -1,8 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Read configuration from environment variables
-let supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-let supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+let supabaseUrl = localStorage.getItem('auraevents_supabase_url') || import.meta.env.VITE_SUPABASE_URL || '';
+let supabaseAnonKey = localStorage.getItem('auraevents_supabase_key') || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 // Sanitization & validity checks
 const isValidUrl = (url) => {
@@ -26,14 +25,30 @@ if (isConfigured) {
   }
 }
 
-// Local Fallback Storage Database Helper (Ensures 100% CRUD operations offline/fallback)
 const getLocalStorageDb = (key, defaultData = []) => {
-  const data = localStorage.getItem(`auraevents_${key}`);
-  if (!data) {
-    localStorage.setItem(`auraevents_${key}`, JSON.stringify(defaultData));
+  try {
+    const data = localStorage.getItem(`auraevents_${key}`);
+    if (!data) {
+      localStorage.setItem(`auraevents_${key}`, JSON.stringify(defaultData));
+      return defaultData;
+    }
+    const parsed = JSON.parse(data);
+    if (Array.isArray(defaultData)) {
+      if (!Array.isArray(parsed)) {
+        localStorage.setItem(`auraevents_${key}`, JSON.stringify(defaultData));
+        return defaultData;
+      }
+    } else if (defaultData !== null && typeof defaultData === 'object') {
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        localStorage.setItem(`auraevents_${key}`, JSON.stringify(defaultData));
+        return defaultData;
+      }
+    }
+    return parsed;
+  } catch (err) {
+    console.error(`Error loading database table ${key} from storage:`, err);
     return defaultData;
   }
-  return JSON.parse(data);
 };
 
 const setLocalStorageDb = (key, data) => {
@@ -170,12 +185,12 @@ export const supabaseClient = {
           return data.map(d => ({
             id: d.id,
             title: d.title,
-            category: d.category,
-            basePrice: Number(d.base_price),
-            pricingModel: d.pricing_model,
-            description: d.description,
-            iconKey: d.icon_key,
-            isStandard: d.is_standard
+            category: d.category || 'Infrastructure',
+            basePrice: Number(d.base_price !== undefined ? d.base_price : (d.cost !== undefined ? d.cost : 0)) || 0,
+            pricingModel: d.pricing_model || d.pricingModel || 'flat',
+            description: d.description || d.desc || '',
+            iconKey: d.icon_key || d.icon || d.iconKey || 'Infrastructure',
+            isStandard: d.is_standard !== undefined ? d.is_standard : (d.isStandard !== undefined ? d.isStandard : false)
           }));
         }
         console.warn("Table 'services' empty or errored, seeding mock data:", error);
@@ -183,7 +198,17 @@ export const supabaseClient = {
         console.warn("Supabase services fetch failed:", err);
       }
     }
-    return getLocalStorageDb('services', INITIAL_SERVICES);
+    const list = getLocalStorageDb('services', INITIAL_SERVICES);
+    return list.filter(Boolean).map(d => ({
+      id: d.id,
+      title: d.title,
+      category: d.category || 'Infrastructure',
+      basePrice: Number(d.basePrice !== undefined ? d.basePrice : (d.base_price !== undefined ? d.base_price : (d.cost !== undefined ? d.cost : 0))) || 0,
+      pricingModel: d.pricingModel || d.pricing_model || 'flat',
+      description: d.description || d.desc || '',
+      iconKey: d.iconKey || d.icon_key || d.icon || 'Infrastructure',
+      isStandard: d.isStandard !== undefined ? d.isStandard : (d.is_standard !== undefined ? d.is_standard : false)
+    }));
   },
 
   // -------------------------------------------------------------
@@ -225,6 +250,9 @@ export const supabaseClient = {
           .order('BookingDate', { ascending: false });
 
         if (!error && data) {
+          // Retrieve metadata maps for guest count and selected services
+          const metadata = getLocalStorageDb('bookings_metadata', {}) || {};
+          
           // Map database relational structure to the flat format expected by the frontend
           return data.map(b => {
             const part = b.Participant || {};
@@ -242,16 +270,23 @@ export const supabaseClient = {
               eventType = 'corporate';
             }
 
+            const bookingMeta = metadata[b.BookingID] || {};
+
+            let mappedStatus = b.BookingStatus || 'Confirmed';
+            if (mappedStatus === 'Applied' || mappedStatus === 'Pending Approval') mappedStatus = 'Pending';
+            else if (mappedStatus === 'Shortlisted' || mappedStatus === 'Selected') mappedStatus = 'Confirmed';
+            else if (mappedStatus === 'Interview Scheduled') mappedStatus = 'Cancelled';
+
             return {
               id: b.BookingID,
               client_name: part.FirstName ? `${part.FirstName} ${part.LastName || ''}`.trim() : 'Unknown Client',
               client_email: part.Email || 'unknown@client.com',
               event_date: ev.EventDate || b.BookingDate,
               event_type: eventType,
-              guest_count: 1,
-              selected_services: ['speakers', 'lights'],
+              guest_count: bookingMeta.guest_count || 150,
+              selected_services: bookingMeta.selected_services || ['speakers', 'lights'],
               total_price: Number(b.TotalAmount || pay.Amount || 0),
-              status: b.BookingStatus || 'Confirmed',
+              status: mappedStatus,
               created_at: b.BookingDate,
               participant_id: part.ParticipantID,
               payment_id: pay.PaymentID,
@@ -268,7 +303,28 @@ export const supabaseClient = {
         console.warn("Supabase bookings catch-all failure:", err);
       }
     }
-    return getLocalStorageDb('bookings', INITIAL_BOOKINGS);
+    const list = getLocalStorageDb('bookings', INITIAL_BOOKINGS);
+    return list.filter(b => b !== null && typeof b === 'object').map(b => {
+      let mappedStatus = b.status || 'Confirmed';
+      if (mappedStatus === 'Applied' || mappedStatus === 'Pending Approval') mappedStatus = 'Pending';
+      else if (mappedStatus === 'Shortlisted' || mappedStatus === 'Selected') mappedStatus = 'Confirmed';
+      else if (mappedStatus === 'Interview Scheduled') mappedStatus = 'Cancelled';
+      return {
+        id: b.id || b.BookingID || crypto.randomUUID(),
+        client_name: b.client_name || b.clientName || 'Unknown Client',
+        client_email: b.client_email || b.clientEmail || 'unknown@client.com',
+        event_date: b.event_date || b.eventDate || new Date().toISOString().split('T')[0],
+        event_type: b.event_type || b.eventType || 'college',
+        guest_count: Number(b.guest_count !== undefined ? b.guest_count : (b.guestCount !== undefined ? b.guestCount : 150)),
+        total_price: Number(b.total_price !== undefined ? b.total_price : (b.totalPrice !== undefined ? b.totalPrice : 0)),
+        status: mappedStatus,
+        created_at: b.created_at || b.BookingDate || new Date().toISOString(),
+        participant_phone: b.participant_phone || b.participantPhone || '',
+        participant_address: b.participant_address || b.participantAddress || '',
+        event_venue: b.event_venue || b.eventVenue || '',
+        payment_status: b.payment_status || b.paymentStatus || 'Paid'
+      };
+    });
   },
 
   insertBooking: async (booking) => {
@@ -332,6 +388,14 @@ export const supabaseClient = {
         if (!bError && bData && bData.length > 0) {
           const bookingId = bData[0].BookingID;
 
+          // Save metadata
+          const metadata = getLocalStorageDb('bookings_metadata', {}) || {};
+          metadata[bookingId] = {
+            guest_count: Number(booking.guestCount || 150),
+            selected_services: booking.selectedServices || ['speakers', 'lights']
+          };
+          setLocalStorageDb('bookings_metadata', metadata);
+
           // 4. Insert payment row
           const newPayment = {
             BookingID: bookingId,
@@ -353,6 +417,12 @@ export const supabaseClient = {
 
     // Local Storage insertion fallback
     const list = getLocalStorageDb('bookings', INITIAL_BOOKINGS);
+    let mappedStatus = flatRecord.status || 'Confirmed';
+    if (mappedStatus === 'Applied' || mappedStatus === 'Pending Approval') mappedStatus = 'Pending';
+    else if (mappedStatus === 'Shortlisted' || mappedStatus === 'Selected') mappedStatus = 'Confirmed';
+    else if (mappedStatus === 'Interview Scheduled') mappedStatus = 'Cancelled';
+    flatRecord.status = mappedStatus;
+
     list.unshift(flatRecord);
     setLocalStorageDb('bookings', list);
     return { success: true, data: flatRecord };
@@ -368,9 +438,23 @@ export const supabaseClient = {
     if (updatedFields.guestCount) flatFields.guest_count = Number(updatedFields.guestCount);
     if (updatedFields.selectedServices) flatFields.selected_services = updatedFields.selectedServices;
     if (updatedFields.totalPrice) flatFields.total_price = Number(updatedFields.totalPrice);
-    if (updatedFields.status) flatFields.status = updatedFields.status;
+    if (updatedFields.status) {
+      let mappedStatus = updatedFields.status;
+      if (mappedStatus === 'Applied' || mappedStatus === 'Pending Approval') mappedStatus = 'Pending';
+      else if (mappedStatus === 'Shortlisted' || mappedStatus === 'Selected') mappedStatus = 'Confirmed';
+      else if (mappedStatus === 'Interview Scheduled') mappedStatus = 'Cancelled';
+      flatFields.status = mappedStatus;
+    }
 
-    if (supabase && !isNaN(id)) {
+    // Save metadata
+    const metadata = getLocalStorageDb('bookings_metadata', {}) || {};
+    metadata[id] = {
+      guest_count: Number(updatedFields.guestCount || metadata[id]?.guest_count || 150),
+      selected_services: updatedFields.selectedServices || metadata[id]?.selected_services || ['speakers', 'lights']
+    };
+    setLocalStorageDb('bookings_metadata', metadata);
+
+    if (supabase && id !== null && id !== undefined && !isNaN(Number(id))) {
       try {
         // Query the Participant ID currently associated with this booking
         const { data: currentB, error: qErr } = await supabase
@@ -402,7 +486,13 @@ export const supabaseClient = {
         else if (updatedFields.eventType === 'concerts') eventId = 3;
 
         const dbFields = {};
-        if (updatedFields.status) dbFields.BookingStatus = updatedFields.status;
+        if (updatedFields.status) {
+          let mappedStatus = updatedFields.status;
+          if (mappedStatus === 'Applied' || mappedStatus === 'Pending Approval') mappedStatus = 'Pending';
+          else if (mappedStatus === 'Shortlisted' || mappedStatus === 'Selected') mappedStatus = 'Confirmed';
+          else if (mappedStatus === 'Interview Scheduled') mappedStatus = 'Cancelled';
+          dbFields.BookingStatus = mappedStatus;
+        }
         if (updatedFields.eventType) dbFields.EventID = eventId;
         if (updatedFields.totalPrice) dbFields.TotalAmount = Number(updatedFields.totalPrice);
 
@@ -433,7 +523,7 @@ export const supabaseClient = {
   },
 
   updateBookingStatus: async (id, status) => {
-    if (supabase && !isNaN(id)) {
+    if (supabase && id !== null && id !== undefined && !isNaN(Number(id))) {
       try {
         const { data, error } = await supabase
           .from('Booking')
@@ -456,7 +546,7 @@ export const supabaseClient = {
   },
 
   deleteBooking: async (id) => {
-    if (supabase && !isNaN(id)) {
+    if (supabase && id !== null && id !== undefined && !isNaN(Number(id))) {
       try {
         const { error } = await supabase
           .from('Booking')
@@ -486,22 +576,54 @@ export const supabaseClient = {
           .from('inquiries')
           .select('*')
           .order('created_at', { ascending: false });
-        if (!error && data) return data;
+        if (!error && data) {
+          return data.filter(i => i !== null && typeof i === 'object').map(i => {
+            let s = i.status || 'Received';
+            if (s === 'Applied') s = 'Received';
+            else if (s === 'Shortlisted') s = 'Under Review';
+            else if (s === 'Selected') s = 'Contacted';
+            else if (s === 'Interview Scheduled') s = 'Approved';
+            return {
+              id: i.id || crypto.randomUUID(),
+              rep_name: i.rep_name || i.repName || 'Client Rep',
+              email: i.email || '',
+              specs_notes: i.specs_notes || i.specsNotes || '',
+              status: s,
+              created_at: i.created_at || new Date().toISOString()
+            };
+          });
+        }
         console.warn("Failed fetching Supabase inquiries:", error);
       } catch (err) {
         console.warn("Supabase inquiries exception:", err);
       }
     }
-    return getLocalStorageDb('inquiries', INITIAL_INQUIRIES);
+    const list = getLocalStorageDb('inquiries', INITIAL_INQUIRIES);
+    return list.filter(i => i !== null && typeof i === 'object').map(i => {
+      let s = i.status || 'Received';
+      if (s === 'Applied') s = 'Received';
+      else if (s === 'Shortlisted') s = 'Under Review';
+      else if (s === 'Selected') s = 'Contacted';
+      else if (s === 'Interview Scheduled') s = 'Approved';
+      return {
+        id: i.id || crypto.randomUUID(),
+        rep_name: i.rep_name || i.repName || 'Client Rep',
+        email: i.email || '',
+        specs_notes: i.specs_notes || i.specsNotes || '',
+        status: s,
+        created_at: i.created_at || new Date().toISOString()
+      };
+    });
   },
 
   insertInquiry: async (inquiry) => {
+    let s = inquiry.status || 'Received';
     const newRecord = {
       id: crypto.randomUUID(),
       rep_name: inquiry.repName,
       email: inquiry.email,
       specs_notes: inquiry.specsNotes,
-      status: inquiry.status || 'Applied',
+      status: s,
       created_at: new Date().toISOString()
     };
 
@@ -544,6 +666,72 @@ export const supabaseClient = {
       return { success: true, data: list[index] };
     }
     return { success: false };
+  },
+
+  deleteInquiry: async (id) => {
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('inquiries')
+          .delete()
+          .eq('id', id);
+        if (!error) return { success: true };
+        console.warn("Supabase inquiry delete error:", error);
+      } catch (err) {
+        console.warn("Supabase inquiry delete exception:", err);
+      }
+    }
+    const list = getLocalStorageDb('inquiries', INITIAL_INQUIRIES);
+    const filtered = list.filter(i => i.id !== id);
+    setLocalStorageDb('inquiries', filtered);
+    return { success: true };
+  },
+
+  insertService: async (service) => {
+    const newRecord = {
+      id: service.id,
+      title: service.title,
+      category: service.category,
+      base_price: Number(service.basePrice),
+      pricing_model: service.pricingModel,
+      description: service.description,
+      icon_key: service.iconKey || 'Infrastructure',
+      is_standard: service.isStandard || false
+    };
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('services')
+          .insert([newRecord]);
+        if (!error) return { success: true };
+        console.warn("Supabase service insert error:", error);
+      } catch (err) {
+        console.warn("Supabase service insert exception:", err);
+      }
+    }
+    const list = getLocalStorageDb('services', INITIAL_SERVICES);
+    list.push(service);
+    setLocalStorageDb('services', list);
+    return { success: true };
+  },
+
+  deleteService: async (id) => {
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('services')
+          .delete()
+          .eq('id', id);
+        if (!error) return { success: true };
+        console.warn("Supabase service delete error:", error);
+      } catch (err) {
+        console.warn("Supabase service delete exception:", err);
+      }
+    }
+    const list = getLocalStorageDb('services', INITIAL_SERVICES);
+    const filtered = list.filter(s => s.id !== id);
+    setLocalStorageDb('services', filtered);
+    return { success: true };
   },
 
   // -------------------------------------------------------------

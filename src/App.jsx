@@ -227,6 +227,10 @@ function App() {
 
   // User authentication state (simulated)
   const [userSession, setUserSession] = useState(null);
+  const handleSignOut = () => {
+    setUserSession(null);
+    addSqlLog('ALTER', 'ALTER SESSION SET user = NULL; (LOGOUT: Successfully signed out.)', 'warn');
+  };
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login', 'register', 'otp', 'forgot'
   const [prevAuthMode, setPrevAuthMode] = useState('');
@@ -326,12 +330,31 @@ function App() {
 
   // Admin Login & Session States
   const [adminSession, setAdminSession] = useState(() => {
-    const saved = localStorage.getItem('auraevents_admin_session') || sessionStorage.getItem('auraevents_admin_session');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('auraevents_admin_session') || sessionStorage.getItem('auraevents_admin_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch (err) {
+      console.error("Error parsing admin session from storage:", err);
+      return null;
+    }
   });
   const isClient = adminSession?.role === 'Premium Client';
   const isVendor = adminSession?.role === 'Event Vendor';
   const isAdmin = !adminSession?.role || adminSession?.role === 'Super Admin' || adminSession?.role === 'Guest Admin';
+  
+  const effectiveActiveTab = useMemo(() => {
+    if (isClient) {
+      if (adminActiveTab !== 'dashboard' && adminActiveTab !== 'bookings') {
+        return 'dashboard';
+      }
+    } else if (isVendor) {
+      if (adminActiveTab !== 'dashboard' && adminActiveTab !== 'bookings' && adminActiveTab !== 'capabilities') {
+        return 'dashboard';
+      }
+    }
+    return adminActiveTab;
+  }, [adminActiveTab, isClient, isVendor]);
+
   const [isAdminPageActive, setIsAdminPageActive] = useState(false);
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPhone, setAdminPhone] = useState('');
@@ -404,14 +427,24 @@ function App() {
       setAdminLoginLoading(false);
 
       if (res.success) {
-        // Enhancement: Trigger 2FA OTP verification step!
-        const code = String(Math.floor(1000 + Math.random() * 9000));
-        setAdminOtpCode(code);
-        setAdminOtpSent(true);
-        setAdminOtpInputs(['', '', '', '']);
-        setAdminOtpError('');
-        // Alert simulator for security code
-        alert(`🔒 AuraEvents 2FA Security Center:\nFor evaluation, a simulated OTP code has been broadcasted:\n\n✨ [ ${code} ] ✨\n\nEnter these digits in the secure panel to authorize.`);
+        const session = res.session;
+        if (adminRememberMe) {
+          localStorage.setItem('auraevents_admin_session', JSON.stringify(session));
+        } else {
+          sessionStorage.setItem('auraevents_admin_session', JSON.stringify(session));
+        }
+        
+        setAdminSession(session);
+        setAdminOtpSent(false);
+        // Redirect to Dashboard (simulate route change)
+        window.location.hash = "#admin-dashboard";
+        
+        addSqlLog('SELECT', `SELECT * FROM admins WHERE email = '${session.email}' (SUCCESS: JWT session generated)`, 'success');
+        
+        // Clear inputs
+        setAdminEmail('');
+        setAdminPhone('');
+        setAdminPassword('');
       } else {
         setAdminGeneralError('Invalid Admin Credentials');
         addSqlLog('SELECT', `SELECT * FROM admins WHERE email = '${adminEmail}' (FAILED: credentials mismatch)`, 'error');
@@ -557,9 +590,12 @@ function App() {
     setTimeout(() => addSmtpLog('RCPT TO', `RCPT TO: <dd058288@gmail.com> ➜ 250 2.1.5 OK`, 'info'), 1200);
     setTimeout(() => addSmtpLog('DATA', 'DATA ➜ 354 Start mail input; end with <CR><LF>.<CR><LF>', 'info'), 1500);
 
-    // Call local Express mailer server if active
     try {
-      const response = await fetch('http://localhost:5000/api/notify', {
+      const backendHost = import.meta.env.VITE_BACKEND_URL || 
+                          (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+                            ? 'http://localhost:5000' 
+                            : '');
+      const response = await fetch(`${backendHost}/api/notify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ formType, payload })
@@ -716,8 +752,8 @@ function App() {
   // Filtered Services List
   const filteredServices = useMemo(() => {
     return services.filter((service) => {
-      const matchesSearch = service.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            service.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = (service.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            (service.description || service.desc || '').toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory = activeFilter === 'All' || service.category === activeFilter;
       return matchesSearch && matchesCategory;
     });
@@ -785,18 +821,25 @@ function App() {
   // -------------------------------------------------------------
   // DYNAMIC DATABASE METRICS & SVG PLOTTING (DBMS SaaS Dash)
   // -------------------------------------------------------------
+  const roleFilteredBookings = useMemo(() => {
+    if (isClient && adminSession?.email) {
+      return bookings.filter(b => b.client_email?.toLowerCase() === adminSession.email?.toLowerCase());
+    }
+    return bookings;
+  }, [bookings, isClient, adminSession]);
+
   const dbMetrics = useMemo(() => {
-    const totalEvents = bookings.length;
-    const totalGuests = bookings.reduce((sum, b) => sum + (b.guest_count || 0), 0);
-    const totalRevenue = bookings.reduce((sum, b) => sum + Number(b.total_price || 0), 0);
+    const totalEvents = roleFilteredBookings.length;
+    const totalGuests = roleFilteredBookings.reduce((sum, b) => sum + (b.guest_count || 0), 0);
+    const totalRevenue = roleFilteredBookings.reduce((sum, b) => sum + Number(b.total_price || 0), 0);
     
     // Unique client count
-    const uniqueEmails = new Set(bookings.map(b => b.client_email));
+    const uniqueEmails = new Set(roleFilteredBookings.map(b => b.client_email));
     const activeClients = uniqueEmails.size;
 
     // Guest limits scaling for Bar Chart plotting
-    const maxGuests = bookings.length > 0 ? Math.max(...bookings.map(b => b.guest_count || 0)) : 1000;
-    const maxCost = bookings.length > 0 ? Math.max(...bookings.map(b => Number(b.total_price || 0))) : 100000;
+    const maxGuests = roleFilteredBookings.length > 0 ? Math.max(...roleFilteredBookings.map(b => b.guest_count || 0)) : 1000;
+    const maxCost = roleFilteredBookings.length > 0 ? Math.max(...roleFilteredBookings.map(b => Number(b.total_price || 0))) : 100000;
 
     return {
       totalEvents,
@@ -806,7 +849,7 @@ function App() {
       maxGuests,
       maxCost
     };
-  }, [bookings]);
+  }, [roleFilteredBookings]);
 
   // -------------------------------------------------------------
   // CRUD CONTROLLERS (Front-End Bindings)
@@ -880,11 +923,11 @@ function App() {
 
   // READ (R) - Live Database Bookings Visual Filter
   const filteredBookingsLogs = useMemo(() => {
-    return bookings.filter(b => {
+    return roleFilteredBookings.filter(b => {
       const text = `${b.client_name} ${b.client_email} ${b.event_type}`.toLowerCase();
       return text.includes(dbSearchQuery.toLowerCase());
     });
-  }, [bookings, dbSearchQuery]);
+  }, [roleFilteredBookings, dbSearchQuery]);
 
   // UPDATE (U) - Pull details and launch inline editor
   const handleOpenEditModal = (b) => {
@@ -901,17 +944,6 @@ function App() {
   const handleEditSubmit = async (e) => {
     e.preventDefault();
     if (!editClientName || !editClientEmail || !editEventDate) return;
-
-    // Timezone-safe past date boundary check for updates
-    const selectedDateObj = new Date(editEventDate);
-    const todayObj = new Date();
-    todayObj.setHours(0, 0, 0, 0);
-
-    if (selectedDateObj < todayObj) {
-      alert("Past dates are not allowed! Real-time timezone verification has blocked this transaction.");
-      addSqlLog('UPDATE', `UPDATE Booking SET BookingDate = '${editEventDate}' WHERE BookingID = ${editId} (FAILED: check_future_booking constraint)`, 'error');
-      return;
-    }
 
     const payload = {
       clientName: editClientName,
@@ -974,6 +1006,8 @@ function App() {
 
     const res = await supabaseClient.insertInquiry(payload);
     if (res.success) {
+      const fetchedInquiries = await supabaseClient.fetchInquiries();
+      setInquiries(fetchedInquiries);
       setContactSuccess(true);
       addSqlLog('INSERT', `INSERT INTO inquiries (id, rep_name, email, specs_notes) VALUES (gen_random_uuid(), '${contactName}', '${contactEmail}', 'Message text...');`, 'success');
       
@@ -1026,7 +1060,7 @@ function App() {
       isStandard: false
     };
 
-    // Sync locally
+    // Sync locally & DB
     const savedServices = services;
     const isExist = savedServices.find(s => s.id === newServiceId);
     if (isExist) {
@@ -1034,29 +1068,37 @@ function App() {
       return;
     }
 
-    const updated = [...savedServices, payload];
-    localStorage.setItem('auraevents_services', JSON.stringify(updated));
-    setServices(updated);
-    setShowAddServiceModal(false);
-    
-    // Clear fields
-    setNewServiceId('');
-    setNewServiceTitle('');
-    setNewServiceBasePrice(100);
-    setNewServiceDesc('');
-    
-    addSqlLog('INSERT', `INSERT INTO services (id, title, category, base_price, pricing_model) VALUES ('${payload.id}', '${payload.title}', '${payload.category}', ${payload.basePrice}, '${payload.pricingModel}');`, 'success');
+    const res = await supabaseClient.insertService(payload);
+    if (res.success) {
+      const fetched = await supabaseClient.fetchServices();
+      setServices(fetched);
+      setShowAddServiceModal(false);
+      
+      // Clear fields
+      setNewServiceId('');
+      setNewServiceTitle('');
+      setNewServiceBasePrice(100);
+      setNewServiceDesc('');
+      
+      addSqlLog('INSERT', `INSERT INTO services (id, title, category, base_price, pricing_model) VALUES ('${payload.id}', '${payload.title}', '${payload.category}', ${payload.basePrice}, '${payload.pricingModel}');`, 'success');
+    } else {
+      alert("Failed to insert service catalog item.");
+    }
   };
 
   // Admin Catalog CRUD - DELETE SERVICE
-  const handleDeleteService = (id) => {
+  const handleDeleteService = async (id) => {
     const ok = window.confirm(`DBMS Catalog Alert:\nAre you sure you want to annul and delete the service "${id}" from the services table catalog?`);
     if (!ok) return;
 
-    const filtered = services.filter(s => s.id !== id);
-    localStorage.setItem('auraevents_services', JSON.stringify(filtered));
-    setServices(filtered);
-    addSqlLog('DELETE', `DELETE FROM services WHERE id = '${id}';`, 'warn');
+    const res = await supabaseClient.deleteService(id);
+    if (res.success) {
+      const fetched = await supabaseClient.fetchServices();
+      setServices(fetched);
+      addSqlLog('DELETE', `DELETE FROM services WHERE id = '${id}';`, 'warn');
+    } else {
+      alert("Failed to delete service catalog item.");
+    }
   };
 
   // AI Promotional Text Generator
@@ -1139,39 +1181,37 @@ function App() {
     e.preventDefault();
     if (authMode === 'login') {
       if (!authEmail || !authPassword) return;
-      setPrevAuthMode('login');
-      // Advance to OTP simulator
-      setAuthMode('otp');
-    } else if (authMode === 'register') {
-      if (!authEmail || !authPassword || !authName) return;
-      setPrevAuthMode('register');
-      setAuthMode('otp');
-    } else {
-      // Complete OTP Verification
-      if (prevAuthMode === 'register') {
-        // Trigger Nodemailer SMTP email notification to dd058288@gmail.com
-        triggerSmtpNotification('registration', {
-          customerName: authName,
-          customerEmail: authEmail,
-          phoneNumber: "+91 6363579209",
-          eventType: 'Clerk Account Registration',
-          eventDate: new Date().toISOString().split('T')[0],
-          guestCount: 'N/A',
-          message: `New administrator/clerk account created for ${authName} (${authEmail}).`
-        });
-      }
+      
       setUserSession({
-        email: authEmail || 'evaluator@university.edu',
-        name: authName || 'Dr. Roberts'
+        email: authEmail,
+        name: authEmail.split('@')[0] || 'User'
       });
       setShowAuthModal(false);
-      // Reset modes
-      setAuthMode('login');
-      setPrevAuthMode('');
       setAuthEmail('');
       setAuthPassword('');
       setAuthName('');
-      setAuthOtp(['', '', '', '']);
+    } else if (authMode === 'register') {
+      if (!authEmail || !authPassword || !authName) return;
+
+      // Trigger Nodemailer SMTP email notification to dd058288@gmail.com
+      triggerSmtpNotification('registration', {
+        customerName: authName,
+        customerEmail: authEmail,
+        phoneNumber: "+91 6363579209",
+        eventType: 'Clerk Account Registration',
+        eventDate: new Date().toISOString().split('T')[0],
+        guestCount: 'N/A',
+        message: `New administrator/clerk account created for ${authName} (${authEmail}).`
+      });
+
+      setUserSession({
+        email: authEmail,
+        name: authName
+      });
+      setShowAuthModal(false);
+      setAuthEmail('');
+      setAuthPassword('');
+      setAuthName('');
     }
   };
 
@@ -1849,7 +1889,7 @@ function App() {
             </div>
 
             {/* DYNAMIC SVG CHART GRAPHICS */}
-            {bookings.length > 0 && (
+            {roleFilteredBookings.length > 0 && (
               <div className="charts-container">
                 {/* SVG Bar Chart: Guest Distribution */}
                 <div className="chart-card glass-panel">
@@ -1864,7 +1904,7 @@ function App() {
                       <line x1="30" y1="90" x2="390" y2="90" stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
                       <line x1="30" y1="160" x2="390" y2="160" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
                       
-                      {bookings.slice(0, 7).map((b, i) => {
+                      {roleFilteredBookings.slice(0, 7).map((b, i) => {
                         const barWidth = 30;
                         const spacing = 45;
                         const x = 50 + i * spacing;
@@ -1932,7 +1972,7 @@ function App() {
                       <line x1="30" y1="160" x2="390" y2="160" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
 
                       {(() => {
-                        const activeList = bookings.slice(0, 7);
+                        const activeList = roleFilteredBookings.slice(0, 7);
                         const points = activeList.map((b, i) => {
                           const spacing = 50;
                           const x = 50 + i * spacing;
@@ -2025,13 +2065,15 @@ function App() {
               >
                 📋 Bookings Client Registry
               </button>
-              <button 
-                onClick={() => { setIsAdminView(true); setDbTab('admin'); }} 
-                className={`admin-tab-btn ${dbTab === 'admin' ? 'active' : ''}`}
-                id="admin-override-btn"
-              >
-                🔐 Administrative Control Center
-              </button>
+              {!isClient && (
+                <button 
+                  onClick={() => { setIsAdminView(true); setDbTab('admin'); }} 
+                  className={`admin-tab-btn ${dbTab === 'admin' ? 'active' : ''}`}
+                  id="admin-override-btn"
+                >
+                  🔐 Administrative Control Center
+                </button>
+              )}
               <button 
                 onClick={() => { setDbTab('docs'); }} 
                 className={`admin-tab-btn ${dbTab === 'docs' ? 'active' : ''}`}
@@ -2093,7 +2135,7 @@ function App() {
                           <th className="db-th">Tickets / Guests</th>
                           <th className="db-th">Payment / Price</th>
                           <th className="db-th">Status</th>
-                          <th className="db-th" style={{textAlign: 'center'}}>Actions</th>
+                          {!isClient && !isVendor && <th className="db-th" style={{textAlign: 'center'}}>Actions</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -2105,16 +2147,22 @@ function App() {
                             <td className="db-td">
                               <div className="db-client-info" style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                                 <span className="db-client-name" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{b.client_name}</span>
-                                <span className="db-client-email">{b.client_email}</span>
-                                {b.participant_phone ? (
-                                  <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)' }}>📞 {b.participant_phone}</span>
+                                {isVendor ? (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.15rem' }}>🔒 Contacts Restricted (Vendor)</span>
                                 ) : (
-                                  <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)' }}>📞 +91 6363579209</span>
-                                )}
-                                {b.participant_address ? (
-                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📍 {b.participant_address}</span>
-                                ) : (
-                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📍 Bangalore, Karnataka</span>
+                                  <>
+                                    <span className="db-client-email">{b.client_email}</span>
+                                    {b.participant_phone ? (
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)' }}>📞 {b.participant_phone}</span>
+                                    ) : (
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)' }}>📞 +91 6363579209</span>
+                                    )}
+                                    {b.participant_address ? (
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📍 {b.participant_address}</span>
+                                    ) : (
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📍 Bangalore, Karnataka</span>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -2138,28 +2186,30 @@ function App() {
                               </span>
                             </td>
                             <td className="db-td">
-                              <span className={`status-badge-pill ${b.status.replace(/ /g, '-').toLowerCase()}`}>
+                              <span className={`status-badge-pill ${(b.status || 'Pending Approval').replace(/ /g, '-').toLowerCase()}`}>
                                 {b.status}
                               </span>
                             </td>
-                            <td className="db-td">
-                              <div className="db-actions" style={{justifyContent: 'center'}}>
-                                <button 
-                                  onClick={() => handleOpenEditModal(b)} 
-                                  className="db-btn-icon edit" 
-                                  title="Edit/Reschedule record"
-                                >
-                                  ✏️
-                                </button>
-                                <button 
-                                  onClick={() => handleDeleteBooking(b.id, b.client_name)} 
-                                  className="db-btn-icon delete" 
-                                  title="Annul/Cancel booking row"
-                                >
-                                  🗑️
-                                </button>
-                              </div>
-                            </td>
+                            {!isClient && !isVendor && (
+                              <td className="db-td">
+                                <div className="db-actions" style={{justifyContent: 'center'}}>
+                                  <button 
+                                    onClick={() => handleOpenEditModal(b)} 
+                                    className="db-btn-icon edit" 
+                                    title="Edit/Reschedule record"
+                                  >
+                                    ✏️
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteBooking(b.id, b.client_name)} 
+                                    className="db-btn-icon delete" 
+                                    title="Annul/Cancel booking row"
+                                  >
+                                    🗑️
+                                  </button>
+                                </div>
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -2190,7 +2240,7 @@ function App() {
                           <th className="db-th" style={{ padding: '0.5rem' }}>ID Key</th>
                           <th className="db-th" style={{ padding: '0.5rem' }}>Title</th>
                           <th className="db-th" style={{ padding: '0.5rem' }}>Category</th>
-                          <th className="db-th" style={{ padding: '0.5rem' }}>Base Price (USD)</th>
+                          <th className="db-th" style={{ padding: '0.5rem' }}>Base Price (₹)</th>
                           <th className="db-th" style={{ padding: '0.5rem' }}>Model</th>
                           <th className="db-th" style={{ padding: '0.5rem', textAlign: 'center' }}>Remove</th>
                         </tr>
@@ -2201,7 +2251,7 @@ function App() {
                             <td className="db-td" style={{ fontFamily: 'monospace', fontWeight: 'bold', padding: '0.5rem' }}>{s.id}</td>
                             <td className="db-td" style={{ padding: '0.5rem', fontWeight: 600, color: 'var(--text-primary)' }}>{s.title}</td>
                             <td className="db-td" style={{ padding: '0.5rem' }}>{s.category}</td>
-                            <td className="db-td" style={{ padding: '0.5rem', fontWeight: 700 }}>${s.basePrice}</td>
+                            <td className="db-td" style={{ padding: '0.5rem', fontWeight: 700 }}>{formatINR(Number(s.basePrice) || 0)}</td>
                             <td className="db-td" style={{ padding: '0.5rem' }}>{s.pricingModel}</td>
                             <td className="db-td" style={{ padding: '0.5rem', textAlign: 'center' }}>
                               {s.isStandard ? (
@@ -3492,541 +3542,6 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
         </div>
       )}
 
-      {/* CREATE BOOKING RESERVATION OVERLAY WITH MULTI-STEP CHECKOUT AND QR CODE TICKET */}
-      {showBookingModal && (
-        <div className="modal-overlay" onClick={closeBookingModal}>
-          <div 
-            className="modal-content glass-panel" 
-            onClick={(e) => e.stopPropagation()}
-            style={{maxWidth: '35rem'}}
-          >
-            <button className="modal-close-btn" onClick={closeBookingModal}>✕</button>
-            
-            {/* Multi-step indicator bar */}
-            <div className="checkout-steps-bar">
-              <div className={`checkout-step ${bookingStep === 'details' ? 'active' : ''} ${bookingStep !== 'details' ? 'completed' : ''}`}>
-                <span className="checkout-step-number">1</span>
-                <span>Details</span>
-              </div>
-              <div className={`checkout-step ${bookingStep === 'payment' ? 'active' : ''} ${bookingStep === 'success' ? 'completed' : ''}`}>
-                <span className="checkout-step-number">2</span>
-                <span>Payment</span>
-              </div>
-              <div className={`checkout-step ${bookingStep === 'success' ? 'completed active' : ''}`}>
-                <span className="checkout-step-number">3</span>
-                <span>Ticket</span>
-              </div>
-            </div>
-
-            {bookingStep === 'details' && (
-              <div>
-                <div className="modal-header">
-                  <h3>Submit Transaction to Database</h3>
-                  <p>Check out your custom layout specs and let us know who is organizing this event.</p>
-                </div>
-
-                <form onSubmit={(e) => { e.preventDefault(); setBookingStep('payment'); }} id="booking-simulation-form">
-                  <div className="form-group">
-                    <label htmlFor="modal-client-name">Customer Representative Name</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      id="modal-client-name"
-                      placeholder="e.g. Professor Smith"
-                      value={bookingName}
-                      onChange={(e) => setBookingName(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <div className="form-group" style={{ marginTop: '0.75rem' }}>
-                    <label htmlFor="modal-client-email">E-mail Address</label>
-                    <input
-                      type="email"
-                      className="form-input"
-                      id="modal-client-email"
-                      placeholder="evaluator@university.edu"
-                      value={bookingEmail}
-                      onChange={(e) => setBookingEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  {/* 10-Digit Phone, City, State, Pincode for Relational Participants Schema */}
-                  <div className="form-group" style={{ marginTop: '0.75rem' }}>
-                    <label htmlFor="modal-client-phone">Phone Number (10 Digits)</label>
-                    <input
-                      type="tel"
-                      className="form-input"
-                      id="modal-client-phone"
-                      placeholder="e.g. 6363579209"
-                      value={bookingPhone}
-                      pattern="[0-9]{10}"
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (!isNaN(val)) setBookingPhone(val);
-                      }}
-                      maxLength="10"
-                      required
-                    />
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginTop: '0.75rem' }}>
-                    <div className="form-group">
-                      <label htmlFor="modal-client-city">City</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        id="modal-client-city"
-                        placeholder="Bangalore"
-                        value={bookingCity}
-                        onChange={(e) => setBookingCity(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label htmlFor="modal-client-state">State</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        id="modal-client-state"
-                        placeholder="Karnataka"
-                        value={bookingState}
-                        onChange={(e) => setBookingState(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label htmlFor="modal-client-pincode">Pincode</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        id="modal-client-pincode"
-                        placeholder="560001"
-                        value={bookingPincode}
-                        pattern="[0-9]{6}"
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (!isNaN(val)) setBookingPincode(val);
-                        }}
-                        maxLength="6"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-group" style={{ marginTop: '0.75rem' }}>
-                    <label htmlFor="modal-event-date">Desired Event Target Date</label>
-                    <input
-                      type="date"
-                      className="form-input"
-                      id="modal-event-date"
-                      value={bookingDate}
-                      min={minDate} // Dynamic timezone safe frontend validation constraint
-                      onChange={(e) => setBookingDate(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  {/* Summary Checklist Brief in modal */}
-                  <div style={{background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1rem', margin: '1.25rem 0', fontSize: '0.8rem'}}>
-                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem'}}>
-                      <span style={{color: 'var(--text-secondary)'}}>PostgreSQL Event Type:</span>
-                      <span style={{fontWeight: 600}}>{EVENTS_DATA[selectedEventType]?.title}</span>
-                    </div>
-                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem'}}>
-                      <span style={{color: 'var(--text-secondary)'}}>Committed Modules:</span>
-                      <span style={{fontWeight: 600}}>{selectedServices.length} Selected</span>
-                    </div>
-                    <div style={{display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.4rem', marginTop: '0.4rem'}}>
-                      <span style={{color: '#ffffff', fontWeight: 700}}>Calculated Pricing:</span>
-                      <span style={{color: 'var(--accent-text)', fontWeight: 800}}>{formatINR(totalCostDetails.total)}</span>
-                    </div>
-                  </div>
-
-                  <button 
-                    type="submit" 
-                    className="btn btn-primary btn-glow" 
-                    style={{width: '100%', justifyContent: 'center'}}
-                  >
-                    Proceed to Payment Checkout
-                  </button>
-                </form>
-              </div>
-            )}
-
-            {bookingStep === 'payment' && (
-              <div>
-                <div className="modal-header">
-                  <h3>Simulated Payment Checkout Gateway</h3>
-                  <p>Choose your gateway and complete the checkout to commit the reservation to Supabase.</p>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
-                  <button 
-                    onClick={() => setPaymentMode('card')} 
-                    className={`btn ${paymentMode === 'card' ? 'btn-primary' : 'btn-secondary'}`} 
-                    style={{ flexGrow: 1, justifyContent: 'center', padding: '0.5rem' }}
-                  >
-                    💳 Card Gateway (Stripe)
-                  </button>
-                  <button 
-                    onClick={() => setPaymentMode('upi')} 
-                    className={`btn ${paymentMode === 'upi' ? 'btn-primary' : 'btn-secondary'}`} 
-                    style={{ flexGrow: 1, justifyContent: 'center', padding: '0.5rem' }}
-                  >
-                    📲 UPI Scan (Razorpay)
-                  </button>
-                </div>
-
-                {paymentMode === 'card' ? (
-                  <form onSubmit={handleBookingSubmit}>
-                    <div className="credit-card-mock">
-                      <div className="credit-card-chip"></div>
-                      <div className="credit-card-number">{cardNum ? cardNum.replace(/(\d{4})/g, '$1 ') : '•••• •••• •••• ••••'}</div>
-                      <div className="credit-card-row">
-                        <div>
-                          <span>Card Holder</span>
-                          <div style={{ fontWeight: 600 }}>{cardName || 'YOUR NAME'}</div>
-                        </div>
-                        <div>
-                          <span>Expiry</span>
-                          <div style={{ fontWeight: 600 }}>{cardExp || 'MM/YY'}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="form-group">
-                      <label>16-Digit Card Number</label>
-                      <input 
-                        type="text" 
-                        className="form-input" 
-                        maxLength="16"
-                        placeholder="4111 2222 3333 4444" 
-                        value={cardNum}
-                        onChange={(e) => setCardNum(e.target.value.replace(/\D/g, ''))}
-                        required 
-                      />
-                    </div>
-                    <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
-                      <div className="form-group">
-                        <label>Expiration Date</label>
-                        <input 
-                          type="text" 
-                          className="form-input" 
-                          placeholder="MM/YY" 
-                          maxLength="5"
-                          value={cardExp}
-                          onChange={(e) => setCardExp(e.target.value)}
-                          required 
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>Security CVV</label>
-                        <input 
-                          type="password" 
-                          className="form-input" 
-                          placeholder="•••" 
-                          maxLength="3"
-                          value={cardCvv}
-                          onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
-                          required 
-                        />
-                      </div>
-                    </div>
-                    <div className="form-group" style={{ marginTop: '0.75rem', marginBottom: '1.25rem' }}>
-                      <label>Cardholder Full Name</label>
-                      <input 
-                        type="text" 
-                        className="form-input" 
-                        placeholder="Holder Name" 
-                        value={cardName}
-                        onChange={(e) => setCardName(e.target.value)}
-                        required 
-                      />
-                    </div>
-                    
-                    <button 
-                      type="submit" 
-                      className="btn btn-primary btn-glow" 
-                      style={{ width: '100%', justifyContent: 'center' }}
-                      disabled={paymentLoading}
-                    >
-                      {paymentLoading ? 'Authorizing Gateway Transaction...' : `Confirm & Pay ${formatINR(totalCostDetails.total)}`}
-                    </button>
-                  </form>
-                ) : (
-                  <div style={{ textAlign: 'center' }}>
-                    <div className="upi-qr-mock">
-                      <svg width="140" height="140" viewBox="0 0 100 100">
-                        {/* Custom vector QR code scan path */}
-                        <path d="M0,0 h100 v100 h-100 z" fill="#ffffff" />
-                        <rect x="8" y="8" width="24" height="24" fill="#020617" />
-                        <rect x="12" y="12" width="16" height="16" fill="#ffffff" />
-                        <rect x="68" y="8" width="24" height="24" fill="#020617" />
-                        <rect x="72" y="12" width="16" height="16" fill="#ffffff" />
-                        <rect x="8" y="68" width="24" height="24" fill="#020617" />
-                        <rect x="12" y="72" width="16" height="16" fill="#ffffff" />
-                        <rect x="36" y="36" width="28" height="28" fill="#020617" />
-                        <rect x="40" y="40" width="20" height="20" fill="#ffffff" />
-                        <rect x="15" y="40" width="10" height="10" fill="#020617" />
-                        <rect x="40" y="15" width="15" height="10" fill="#020617" />
-                        <rect x="75" y="45" width="10" height="15" fill="#020617" />
-                        <rect x="45" y="75" width="15" height="10" fill="#020617" />
-                      </svg>
-                      <div className="upi-apps">
-                        <span className="upi-app-pill">GPay</span>
-                        <span className="upi-app-pill">PhonePe</span>
-                        <span className="upi-app-pill">Paytm</span>
-                        <span className="upi-app-pill">UPI ID</span>
-                      </div>
-                    </div>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Scan this Razorpay dynamic checkout code using any UPI App to lock the pricing reservation instantly.</p>
-                    <button 
-                      onClick={handleBookingSubmit} 
-                      className="btn btn-primary btn-glow" 
-                      style={{ width: '100%', justifyContent: 'center' }}
-                      disabled={paymentLoading}
-                    >
-                      {paymentLoading ? 'Confirming UPI Payment...' : `Confirm Scan & Authorize ${formatINR(totalCostDetails.total)}`}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            
-            {bookingStep === 'success' && (
-              <div className="success-state">
-                <div className="success-icon-box" style={{marginBottom: '1rem', background: '#10b981', color: '#ffffff'}}>✓</div>
-                <h3 className="success-title">Event Plan Saved & Booked!</h3>
-                <p className="success-desc" style={{marginBottom: '1.5rem'}}>
-                  Your payment was authorized successfully. Your customized specifications are committed as a new row in the Supabase PostgreSQL 'bookings' table.
-                </p>
-                
-                {/* Visual Event Ticket Stub with QR Code */}
-                {recentBookingResult && (
-                  <div className="ticket-stub">
-                    <div className="ticket-header">
-                      <span style={{fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1rem', color: '#ffffff'}}>
-                        🎟️ AURA ENTRY TICKET
-                      </span>
-                      <span className="ticket-badge" style={{ background: '#10b981', color: '#ffffff' }}>CONFIRMED</span>
-                    </div>
-
-                    <div className="ticket-grid">
-                      <div style={{ textAlign: 'left' }}>
-                        <div className="ticket-meta-label">System Transaction UUID (Primary key)</div>
-                        <div className="ticket-meta-val" style={{fontSize: '0.65rem', fontFamily: 'monospace', color: 'var(--accent-text)'}}>{recentBookingResult.id}</div>
-
-                        <div className="ticket-meta-label">Representative Customer</div>
-                        <div className="ticket-meta-val">{recentBookingResult.client_name}</div>
-
-                        <div className="ticket-meta-label">Event Target Date & Model</div>
-                        <div className="ticket-meta-val" style={{fontSize: '0.85rem'}}>
-                          {recentBookingResult.event_date} | {recentBookingResult.event_type.toUpperCase()}
-                        </div>
-
-                        <div className="ticket-meta-label">Total Cost Locked (₹)</div>
-                        <div className="ticket-meta-val" style={{color: 'var(--accent-primary)', fontSize: '1rem', margin: 0, fontWeight: 800}}>
-                          {formatDirectINR(recentBookingResult.total_price)}
-                        </div>
-                      </div>
-
-                      {/* Mock QR Code generator block */}
-                      <div style={{display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center'}}>
-                        <div className="ticket-qr-box" style={{ background: '#ffffff', padding: '0.5rem', borderRadius: '4px' }}>
-                          <svg className="ticket-qr-svg" viewBox="0 0 100 100" style={{ width: '80px', height: '80px' }}>
-                            {/* QR Outer border */}
-                            <path d="M0,0 h100 v100 h-100 z" fill="#ffffff" />
-                            {/* QR Patterns */}
-                            <rect x="10" y="10" width="20" height="20" fill="#030712" />
-                            <rect x="15" y="15" width="10" height="10" fill="#ffffff" />
-                            
-                            <rect x="70" y="10" width="20" height="20" fill="#030712" />
-                            <rect x="75" y="15" width="10" height="10" fill="#ffffff" />
-                            
-                            <rect x="10" y="70" width="20" height="20" fill="#030712" />
-                            <rect x="15" y="75" width="10" height="10" fill="#ffffff" />
-                            
-                            <rect x="40" y="40" width="20" height="20" fill="#030712" />
-                            <rect x="45" y="45" width="10" height="10" fill="#ffffff" />
-                            
-                            {/* Small specs blocks */}
-                            <rect x="35" y="10" width="10" height="5" fill="#030712" />
-                            <rect x="55" y="15" width="5" height="15" fill="#030712" />
-                            <rect x="10" y="45" width="15" height="5" fill="#030712" />
-                            <rect x="45" y="70" width="10" height="10" fill="#030712" />
-                            <rect x="70" y="45" width="15" height="15" fill="#030712" />
-                            <rect x="80" y="75" width="10" height="5" fill="#030712" />
-                          </svg>
-                        </div>
-                        <span style={{fontSize: '0.65rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '0.5rem', display: 'block'}}>
-                          Scan for Entrance logs
-                        </span>
-                      </div>
-
-                    </div>
-                  </div>
-                )}
-
-                <button 
-                  onClick={closeBookingModal} 
-                  className="btn btn-primary"
-                  style={{width: '100%', justifyContent: 'center'}}
-                >
-                  Return to Dashboard
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* UPDATE (U) BOOKING RESERVATION OVERLAY */}
-      {showEditModal && (
-        <div className="edit-modal-overlay" onClick={() => setShowEditModal(false)}>
-          <div 
-            className="edit-modal-content glass-panel" 
-            onClick={(e) => e.stopPropagation()}
-            style={{borderColor: '#3b82f6'}}
-          >
-            <button className="modal-close-btn" onClick={() => setShowEditModal(false)}>✕</button>
-            <div className="modal-header">
-              <h3 style={{color: '#3b82f6'}}>Update Database Transaction</h3>
-              <p>Perform an <code>UPDATE</code> transaction on bookings row primary key: <span style={{fontFamily: 'monospace', fontSize: '0.7rem', color: 'var(--accent-text)'}}>{editId}</span></p>
-            </div>
-
-            <form onSubmit={handleEditSubmit} id="edit-booking-form">
-              <div className="grid" style={{gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem'}}>
-                <div className="form-group" style={{margin: 0}}>
-                  <label htmlFor="edit-client-name">Rep Name</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    id="edit-client-name"
-                    value={editClientName}
-                    onChange={(e) => setEditClientName(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="form-group" style={{margin: 0}}>
-                  <label htmlFor="edit-client-email">Email</label>
-                  <input
-                    type="email"
-                    className="form-input"
-                    id="edit-client-email"
-                    value={editClientEmail}
-                    onChange={(e) => setEditClientEmail(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid" style={{gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem'}}>
-                <div className="form-group" style={{margin: 0}}>
-                  <label htmlFor="edit-event-date">Target Date</label>
-                  <input
-                    type="date"
-                    className="form-input"
-                    id="edit-event-date"
-                    value={editEventDate}
-                    min={minDate} // Dynamic timezone-safe date boundary constraint
-                    onChange={(e) => setEditEventDate(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="form-group" style={{margin: 0}}>
-                  <label htmlFor="edit-event-type">Event Category</label>
-                  <select 
-                    className="form-input"
-                    id="edit-event-type"
-                    value={editEventType}
-                    onChange={(e) => setEditEventType(e.target.value)}
-                    style={{background: 'var(--bg-card)'}}
-                  >
-                    {Object.entries(EVENTS_DATA).map(([key, val]) => (
-                      <option key={key} value={key} style={{background: 'var(--bg-deep)'}}>
-                        {val.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="edit-guest-slider">
-                  Attendance Limit
-                  <span className="val" style={{color: '#3b82f6', float: 'right'}}>{editGuestCount} Guests</span>
-                </label>
-                <div className="range-slider-container">
-                  <input
-                    type="range"
-                    id="edit-guest-slider"
-                    className="range-slider"
-                    min="50"
-                    max="3000"
-                    step="50"
-                    value={editGuestCount}
-                    onChange={(e) => setEditGuestCount(Number(e.target.value))}
-                  />
-                </div>
-              </div>
-
-              {/* Service list checks for editing modal */}
-              <div className="form-group">
-                <label>Update Configured Modules</label>
-                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.4rem', maxHeight: '140px', overflowY: 'auto', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.5rem'}}>
-                  {services.map((service) => {
-                    const isChecked = editSelectedServices.includes(service.id);
-                    return (
-                      <label 
-                        key={service.id} 
-                        style={{
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          gap: '0.4rem', 
-                          fontSize: '0.75rem', 
-                          color: isChecked ? '#ffffff' : 'var(--text-secondary)',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleEditService(service.id)}
-                          style={{accentColor: '#3b82f6', width: '0.85rem', height: '0.85rem'}}
-                        />
-                        <span style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}} title={service.title}>
-                          {service.title}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div style={{background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem'}}>
-                <div>
-                  <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block'}}>NEW ESTIMATED PRICE</span>
-                  <span style={{fontSize: '1.35rem', fontWeight: '800', color: '#ffffff'}}>{formatINR(computedEditTotal)}</span>
-                </div>
-                <span className="footer-college-tag" style={{borderColor: 'rgba(59, 130, 246, 0.3)', color: '#3b82f6', background: 'rgba(59, 130, 246, 0.05)'}}>
-                  Recalculated
-                </span>
-              </div>
-
-              <button 
-                type="submit" 
-                className="btn btn-primary" 
-                style={{width: '100%', justifyContent: 'center', background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', boxShadow: '0 0 20px rgba(59, 130, 246, 0.2)', color: '#ffffff'}}
-              >
-                Save Updated Plan
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
         </>
       ) : (
         <main className="container" style={{ marginTop: '2rem' }}>
@@ -4301,32 +3816,59 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                         transition: 'var(--transition-smooth)'
                       }}
                     >
-                      🗓️ Bookings
+                      🗓️ {isClient ? 'My Bookings' : isVendor ? 'Fests Calendar' : 'Bookings'}
                     </button>
-                    <button 
-                      type="button"
-                      onClick={() => setAdminActiveTab('inquiries')} 
-                      className={`sidebar-nav-btn ${adminActiveTab === 'inquiries' ? 'active' : ''}`}
-                      style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '0.75rem 1rem',
-                        background: adminActiveTab === 'inquiries' ? 'var(--accent-subtle)' : 'transparent',
-                        border: 'none',
-                        borderRadius: 'var(--radius-md)',
-                        color: adminActiveTab === 'inquiries' ? 'var(--accent-text)' : 'var(--text-secondary)',
-                        fontWeight: 700,
-                        fontSize: '0.85rem',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.75rem',
-                        transition: 'var(--transition-smooth)'
-                      }}
-                    >
-                      📬 Inquiries
-                    </button>
-                    {(!adminSession.role || adminSession.role === 'Premium Client' || adminSession.role === 'Super Admin') && (
+                    {isAdmin && (
+                      <button 
+                        type="button"
+                        onClick={() => setAdminActiveTab('inquiries')} 
+                        className={`sidebar-nav-btn ${adminActiveTab === 'inquiries' ? 'active' : ''}`}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          padding: '0.75rem 1rem',
+                          background: adminActiveTab === 'inquiries' ? 'var(--accent-subtle)' : 'transparent',
+                          border: 'none',
+                          borderRadius: 'var(--radius-md)',
+                          color: adminActiveTab === 'inquiries' ? 'var(--accent-text)' : 'var(--text-secondary)',
+                          fontWeight: 700,
+                          fontSize: '0.85rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.75rem',
+                          transition: 'var(--transition-smooth)'
+                        }}
+                      >
+                        📬 Inquiries
+                      </button>
+                    )}
+                    {(isVendor || isAdmin) && (
+                      <button 
+                        type="button"
+                        onClick={() => setAdminActiveTab('capabilities')} 
+                        className={`sidebar-nav-btn ${adminActiveTab === 'capabilities' ? 'active' : ''}`}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          padding: '0.75rem 1rem',
+                          background: adminActiveTab === 'capabilities' ? 'var(--accent-subtle)' : 'transparent',
+                          border: 'none',
+                          borderRadius: 'var(--radius-md)',
+                          color: adminActiveTab === 'capabilities' ? 'var(--accent-text)' : 'var(--text-secondary)',
+                          fontWeight: 700,
+                          fontSize: '0.85rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.75rem',
+                          transition: 'var(--transition-smooth)'
+                        }}
+                      >
+                        ⚙️ Capabilities Catalog
+                      </button>
+                    )}
+                    {isAdmin && (
                       <>
                         <button 
                           type="button"
@@ -4405,11 +3947,11 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                 <div className="sidebar-footer" style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '1.25rem', marginTop: '1.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
                     <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', color: '#ffffff', fontSize: '1rem' }}>
-                      {adminSession.name.charAt(0)}
+                      {adminSession?.name ? adminSession.name.charAt(0) : 'A'}
                     </div>
                     <div style={{ overflow: 'hidden' }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.8rem', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', color: 'var(--text-primary)' }}>{adminSession.name}</div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--accent-text)', fontWeight: 600 }}>{adminSession.role || 'Guest Admin'}</div>
+                      <div style={{ fontWeight: 700, fontSize: '0.8rem', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', color: 'var(--text-primary)' }}>{adminSession?.name || 'Admin'}</div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--accent-text)', fontWeight: 600 }}>{adminSession?.role || 'Guest Admin'}</div>
                     </div>
                   </div>
                   <button 
@@ -4424,61 +3966,131 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
 
               {/* MAIN CONTENT AREA */}
               <div className="admin-main-content" style={{ flexGrow: 1, minWidth: 0 }}>
-                {adminActiveTab === 'dashboard' && (
+                {effectiveActiveTab === 'dashboard' && (
                   <div>
                     {/* Header */}
                     <div className="section-header" style={{ textAlign: 'left', marginBottom: '2rem' }}>
                       <span className="section-tag" style={{ color: 'var(--accent-text)' }}>DBMS CONTROL PANEL</span>
                       <h2 className="section-title">Authorized Admin Dashboard</h2>
-                      <p className="section-desc">You are logged in as <strong>{adminSession.name}</strong> ({adminSession.email}). Live database row statistics and transaction logs visualizer.</p>
+                      <p className="section-desc">You are logged in as <strong>{adminSession?.name || 'Admin'}</strong> ({adminSession?.email || ''}). Live database row statistics and transaction logs visualizer.</p>
                     </div>
 
-                    {/* Stats Summary Cards (five stats card blocks as in Photo 2) */}
+                    {/* Stats Summary Cards based on Role */}
                     <div className="admin-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-                      {/* Metric Card 1: Registered Clients */}
-                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #3b82f6', background: 'rgba(59,130,246,0.02)', padding: '1.25rem' }}>
-                        <div>
-                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Registered Clients</h4>
-                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{bookings.length + 2}</span>
-                        </div>
-                        <span className="desc" style={{ color: '#3b82f6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>👥 Total active profiles</span>
-                      </div>
-                      
-                      {/* Metric Card 2: Active Vendors */}
-                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #06b6d4', background: 'rgba(6,182,212,0.02)', padding: '1.25rem' }}>
-                        <div>
-                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Vendors</h4>
-                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>3</span>
-                        </div>
-                        <span className="desc" style={{ color: '#06b6d4', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>🏢 Seeded logistics agencies</span>
-                      </div>
+                      {isClient && (
+                        <>
+                          {/* Card 1: My Bookings */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #8b5cf6', background: 'rgba(139,92,246,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>My Bookings</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{roleFilteredBookings.length}</span>
+                            </div>
+                            <span className="desc" style={{ color: '#8b5cf6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>📋 Seeded database rows</span>
+                          </div>
+                          {/* Card 2: Total Guests */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #3b82f6', background: 'rgba(59,130,246,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Guests</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{roleFilteredBookings.reduce((sum, b) => sum + (b.guest_count || 0), 0)}</span>
+                            </div>
+                            <span className="desc" style={{ color: '#3b82f6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>👥 Headcount registered</span>
+                          </div>
+                          {/* Card 3: Total Investment */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #10b981', background: 'rgba(16,185,129,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Investment</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                                {formatDirectINR(roleFilteredBookings.reduce((sum, b) => sum + Number(b.total_price || 0), 0))}
+                              </span>
+                            </div>
+                            <span className="desc" style={{ color: '#10b981', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>💰 Accumulated cost value</span>
+                          </div>
+                        </>
+                      )}
 
-                      {/* Metric Card 3: Open Inquiries */}
-                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #f59e0b', background: 'rgba(245,158,11,0.02)', padding: '1.25rem' }}>
-                        <div>
-                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Open Inquiries</h4>
-                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{inquiries.length}</span>
-                        </div>
-                        <span className="desc" style={{ color: '#f59e0b', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>💼 Custom spec coordinators</span>
-                      </div>
+                      {isVendor && (
+                        <>
+                          {/* Card 1: Fests Scheduled */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #8b5cf6', background: 'rgba(139,92,246,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Fests Scheduled</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{roleFilteredBookings.length}</span>
+                            </div>
+                            <span className="desc" style={{ color: '#8b5cf6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>🗓️ Active reservations</span>
+                          </div>
+                          {/* Card 2: Active Capabilities */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #06b6d4', background: 'rgba(6,182,212,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Capabilities</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{services.length}</span>
+                            </div>
+                            <span className="desc" style={{ color: '#06b6d4', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>🏢 Registered agency profiles</span>
+                          </div>
+                          {/* Card 3: Guests Managed */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #3b82f6', background: 'rgba(59,130,246,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Guests Managed</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{roleFilteredBookings.reduce((sum, b) => sum + (b.guest_count || 0), 0)}</span>
+                            </div>
+                            <span className="desc" style={{ color: '#3b82f6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>👥 Logistics headcount</span>
+                          </div>
+                          {/* Card 4: Value Managed */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #10b981', background: 'rgba(16,185,129,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Value Managed</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                                {formatDirectINR(roleFilteredBookings.reduce((sum, b) => sum + Number(b.total_price || 0), 0))}
+                              </span>
+                            </div>
+                            <span className="desc" style={{ color: '#10b981', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>💰 Under management</span>
+                          </div>
+                        </>
+                      )}
 
-                      {/* Metric Card 4: Events Completed */}
-                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #10b981', background: 'rgba(16,185,129,0.02)', padding: '1.25rem' }}>
-                        <div>
-                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Events Completed</h4>
-                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>1</span>
-                        </div>
-                        <span className="desc" style={{ color: '#10b981', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>✅ Placed & settled fests</span>
-                      </div>
-
-                      {/* Metric Card 5: Total Bookings */}
-                      <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #8b5cf6', background: 'rgba(139,92,246,0.02)', padding: '1.25rem' }}>
-                        <div>
-                          <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Bookings</h4>
-                          <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{bookings.length}</span>
-                        </div>
-                        <span className="desc" style={{ color: '#8b5cf6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>📋 Active database entries</span>
-                      </div>
+                      {isAdmin && (
+                        <>
+                          {/* Card 1: Registered Clients */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #3b82f6', background: 'rgba(59,130,246,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Registered Clients</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{bookings.length + 2}</span>
+                            </div>
+                            <span className="desc" style={{ color: '#3b82f6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>👥 Total active profiles</span>
+                          </div>
+                          {/* Card 2: Active Vendors */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #06b6d4', background: 'rgba(6,182,212,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Vendors</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>3</span>
+                            </div>
+                            <span className="desc" style={{ color: '#06b6d4', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>🏢 Seeded logistics agencies</span>
+                          </div>
+                          {/* Card 3: Open Inquiries */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #f59e0b', background: 'rgba(245,158,11,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Open Inquiries</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{inquiries.length}</span>
+                            </div>
+                            <span className="desc" style={{ color: '#f59e0b', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>💼 Custom spec coordinators</span>
+                          </div>
+                          {/* Card 4: Events Completed */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #10b981', background: 'rgba(16,185,129,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Events Completed</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>1</span>
+                            </div>
+                            <span className="desc" style={{ color: '#10b981', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>✅ Placed & settled fests</span>
+                          </div>
+                          {/* Card 5: Total Bookings */}
+                          <div className="admin-summary-card glass-panel" style={{ borderTop: '4px solid #8b5cf6', background: 'rgba(139,92,246,0.02)', padding: '1.25rem' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Bookings</h4>
+                              <span className="value" style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>{bookings.length}</span>
+                            </div>
+                            <span className="desc" style={{ color: '#8b5cf6', fontSize: '0.7rem', marginTop: '0.25rem', display: 'block' }}>📋 Active database entries</span>
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     <div className="admin-interactive-columns" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.5rem' }}>
@@ -4490,41 +4102,31 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                           <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>
-                              <span>Shortlisted / Approved</span>
-                              <span style={{ color: '#8b5cf6' }}>{bookings.filter(b => b.status === 'Shortlisted' || b.status === 'Approved').length}</span>
+                              <span>Confirmed Bookings</span>
+                              <span style={{ color: '#10b981' }}>{roleFilteredBookings.filter(b => b.status === 'Confirmed').length}</span>
                             </div>
                             <div className="progress-bar-track" style={{ background: 'rgba(255,255,255,0.05)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                              <div className="progress-bar-fill" style={{ background: '#8b5cf6', width: `${(bookings.filter(b => b.status === 'Shortlisted' || b.status === 'Approved').length / (bookings.length || 1)) * 100}%`, height: '100%' }}></div>
+                              <div className="progress-bar-fill" style={{ background: '#10b981', width: `${(roleFilteredBookings.filter(b => b.status === 'Confirmed').length / (roleFilteredBookings.length || 1)) * 100}%`, height: '100%' }}></div>
                             </div>
                           </div>
 
                           <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>
-                              <span>Applied / Pending Approval</span>
-                              <span style={{ color: '#3b82f6' }}>{bookings.filter(b => b.status === 'Applied' || b.status === 'Pending Approval' || !b.status).length}</span>
+                              <span>Pending Review</span>
+                              <span style={{ color: '#f59e0b' }}>{roleFilteredBookings.filter(b => b.status === 'Pending' || !b.status).length}</span>
                             </div>
                             <div className="progress-bar-track" style={{ background: 'rgba(255,255,255,0.05)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                              <div className="progress-bar-fill" style={{ background: '#3b82f6', width: `${(bookings.filter(b => b.status === 'Applied' || b.status === 'Pending Approval' || !b.status).length / (bookings.length || 1)) * 100}%`, height: '100%' }}></div>
+                              <div className="progress-bar-fill" style={{ background: '#f59e0b', width: `${(roleFilteredBookings.filter(b => b.status === 'Pending' || !b.status).length / (roleFilteredBookings.length || 1)) * 100}%`, height: '100%' }}></div>
                             </div>
                           </div>
 
                           <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>
-                              <span>Selected / Confirmed</span>
-                              <span style={{ color: '#10b981' }}>{bookings.filter(b => b.status === 'Selected' || b.status === 'Confirmed').length}</span>
+                              <span>Cancelled / Annulled</span>
+                              <span style={{ color: '#f43f5e' }}>{roleFilteredBookings.filter(b => b.status === 'Cancelled').length}</span>
                             </div>
                             <div className="progress-bar-track" style={{ background: 'rgba(255,255,255,0.05)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                              <div className="progress-bar-fill" style={{ background: '#10b981', width: `${(bookings.filter(b => b.status === 'Selected' || b.status === 'Confirmed').length / (bookings.length || 1)) * 100}%`, height: '100%' }}></div>
-                            </div>
-                          </div>
-
-                          <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>
-                              <span>Interview Scheduled / Negotiating</span>
-                              <span style={{ color: '#06b6d4' }}>{bookings.filter(b => b.status === 'Interview Scheduled' || b.status === 'Negotiating').length}</span>
-                            </div>
-                            <div className="progress-bar-track" style={{ background: 'rgba(255,255,255,0.05)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                              <div className="progress-bar-fill" style={{ background: '#06b6d4', width: `${(bookings.filter(b => b.status === 'Interview Scheduled' || b.status === 'Negotiating').length / (bookings.length || 1)) * 100}%`, height: '100%' }}></div>
+                              <div className="progress-bar-fill" style={{ background: '#f43f5e', width: `${(roleFilteredBookings.filter(b => b.status === 'Cancelled').length / (roleFilteredBookings.length || 1)) * 100}%`, height: '100%' }}></div>
                             </div>
                           </div>
                         </div>
@@ -4536,7 +4138,7 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                         <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Dynamic audit logging of transactional modifications.</p>
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                          {bookings.slice(0, 3).map(b => (
+                          {roleFilteredBookings.slice(0, 3).map(b => (
                             <div key={b.id} style={{ borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <span style={{ color: '#10b981', fontSize: '1.1rem' }}>•</span>
@@ -4554,13 +4156,15 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                   </div>
                 )}
 
-                {adminActiveTab === 'bookings' && (
+                {effectiveActiveTab === 'bookings' && (
                   <div className="glass-panel" style={{ padding: '2rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                      <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.3rem', color: 'var(--text-primary)' }}>Event Management (Bookings Row Audit)</h3>
-                      <button onClick={() => { setBookingStep('details'); setShowBookingModal(true); }} className="btn btn-primary btn-glow" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}>
-                        + Add New Booking
-                      </button>
+                      <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.3rem', color: 'var(--text-primary)' }}>🗓️ {isClient ? 'My Bookings Registry' : isVendor ? 'Fests Calendar Schedule' : 'Event Management (Bookings Row Audit)'}</h3>
+                      {!isClient && !isVendor && (
+                        <button onClick={() => { setBookingStep('details'); setShowBookingModal(true); }} className="btn btn-primary btn-glow" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}>
+                          + Add New Booking
+                        </button>
+                      )}
                     </div>
 
                     <div className="db-search-bar" style={{ marginBottom: '1.25rem' }}>
@@ -4583,30 +4187,36 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                             <th style={{ padding: '0.75rem 0.5rem' }}>Tickets</th>
                             <th style={{ padding: '0.75rem 0.5rem' }}>Payment / Price</th>
                             <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                            <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>DBMS Actions</th>
+                            {!isClient && !isVendor && <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>DBMS Actions</th>}
                           </tr>
                         </thead>
                         <tbody>
-                          {bookings
+                          {roleFilteredBookings
                             .filter(b => 
-                              b.client_name.toLowerCase().includes(dbSearchQuery.toLowerCase()) ||
-                              b.client_email.toLowerCase().includes(dbSearchQuery.toLowerCase()) ||
-                              b.event_type.toLowerCase().includes(dbSearchQuery.toLowerCase())
+                              (b.client_name || '').toLowerCase().includes(dbSearchQuery.toLowerCase()) ||
+                              (b.client_email || '').toLowerCase().includes(dbSearchQuery.toLowerCase()) ||
+                              (b.event_type || '').toLowerCase().includes(dbSearchQuery.toLowerCase())
                             )
                             .map(b => (
                               <tr key={b.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                                 <td style={{ padding: '0.75rem 0.5rem' }}>
                                   <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{b.client_name}</div>
-                                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{b.client_email}</div>
-                                  {b.participant_phone ? (
-                                    <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)', display: 'block' }}>📞 {b.participant_phone}</span>
+                                  {isVendor ? (
+                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.25rem' }}>🔒 Contacts Restricted (Vendor)</div>
                                   ) : (
-                                    <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)', display: 'block' }}>📞 +91 6363579209</span>
-                                  )}
-                                  {b.participant_address ? (
-                                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>📍 {b.participant_address}</span>
-                                  ) : (
-                                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>📍 Bangalore, Karnataka</span>
+                                    <>
+                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{b.client_email}</div>
+                                      {b.participant_phone ? (
+                                        <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)', display: 'block' }}>📞 {b.participant_phone}</span>
+                                      ) : (
+                                        <span style={{ fontSize: '0.7rem', color: 'var(--accent-text)', display: 'block' }}>📞 +91 6363579209</span>
+                                      )}
+                                      {b.participant_address ? (
+                                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>📍 {b.participant_address}</span>
+                                      ) : (
+                                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>📍 Bangalore, Karnataka</span>
+                                      )}
+                                    </>
                                   )}
                                 </td>
                                 <td style={{ padding: '0.75rem 0.5rem', fontWeight: 500 }}>{b.event_date}</td>
@@ -4626,40 +4236,46 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                                   </span>
                                 </td>
                                 <td style={{ padding: '0.75rem 0.5rem' }}>
-                                  {/* Inline status badges matching PlaceTrack screenshot */}
-                                  <select 
-                                    value={b.status || 'Pending Approval'} 
-                                    onChange={async (e) => {
-                                      const newStatus = e.target.value;
-                                      const res = await supabaseClient.updateBookingStatus(b.id, newStatus);
-                                      if (res.success) {
-                                        setBookings(prev => prev.map(item => item.id === b.id ? { ...item, status: newStatus } : item));
-                                        addSqlLog('UPDATE', `UPDATE Booking SET BookingStatus = '${newStatus}' WHERE BookingID = ${b.id};`, 'success');
-                                      }
-                                    }}
-                                    style={{
-                                      background: 'rgba(255,255,255,0.05)',
-                                      color: 'var(--text-primary)',
-                                      border: '1px solid var(--border-glass)',
-                                      borderRadius: '4px',
-                                      padding: '0.25rem 0.5rem',
-                                      fontSize: '0.75rem',
-                                      fontWeight: 600,
-                                      cursor: 'pointer'
-                                    }}
-                                  >
-                                    <option value="Applied">Applied</option>
-                                    <option value="Shortlisted">Shortlisted</option>
-                                    <option value="Selected">Selected</option>
-                                    <option value="Interview Scheduled">Interview Scheduled</option>
-                                  </select>
+                                  {isClient || isVendor ? (
+                                    <span className={`status-badge-pill ${(b.status || 'Pending').toLowerCase()}`}>
+                                      {b.status || 'Pending'}
+                                    </span>
+                                  ) : (
+                                    <select 
+                                      value={b.status || 'Pending'} 
+                                      onChange={async (e) => {
+                                        const newStatus = e.target.value;
+                                        const res = await supabaseClient.updateBookingStatus(b.id, newStatus);
+                                        if (res.success) {
+                                          setBookings(prev => prev.map(item => item.id === b.id ? { ...item, status: newStatus } : item));
+                                          addSqlLog('UPDATE', `UPDATE Booking SET BookingStatus = '${newStatus}' WHERE BookingID = ${b.id};`, 'success');
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.05)',
+                                        color: 'var(--text-primary)',
+                                        border: '1px solid var(--border-glass)',
+                                        borderRadius: '4px',
+                                        padding: '0.25rem 0.5rem',
+                                        fontSize: '0.75rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      <option value="Pending">Pending</option>
+                                      <option value="Confirmed">Confirmed</option>
+                                      <option value="Cancelled">Cancelled</option>
+                                    </select>
+                                  )}
                                 </td>
-                                <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
-                                  <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
-                                    <button onClick={() => handleEditClick(b)} className="btn btn-secondary" style={{ padding: '0.35rem 0.65rem', fontSize: '0.7rem' }}>Edit</button>
-                                    <button onClick={() => handleDeleteClick(b.id)} className="btn btn-accent" style={{ padding: '0.35rem 0.65rem', fontSize: '0.7rem', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.1)' }}>Annul</button>
-                                  </div>
-                                </td>
+                                {!isClient && !isVendor && (
+                                  <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
+                                    <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
+                                      <button onClick={() => handleOpenEditModal(b)} className="btn btn-secondary" style={{ padding: '0.35rem 0.65rem', fontSize: '0.7rem' }}>Edit</button>
+                                      <button onClick={() => handleDeleteBooking(b.id, b.client_name)} className="btn btn-accent" style={{ padding: '0.35rem 0.65rem', fontSize: '0.7rem', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.1)' }}>Annul</button>
+                                    </div>
+                                  </td>
+                                )}
                               </tr>
                             ))}
                         </tbody>
@@ -4668,10 +4284,101 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                   </div>
                 )}
 
-                {adminActiveTab === 'inquiries' && (
+                {/* Capabilities Catalog Tab */}
+                {effectiveActiveTab === 'capabilities' && (
                   <div className="glass-panel" style={{ padding: '2rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                      <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.3rem', color: 'var(--text-primary)' }}>Customer Specs Inquiries (Placements Grid)</h3>
+                      <div>
+                        <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.3rem', color: 'var(--text-primary)' }}>🛠️ Capabilities Catalog CRUD</h3>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Direct catalog CRUD operations and raw database schema execution audits.</p>
+                      </div>
+                      {!isClient && (
+                        <button onClick={() => setShowAddServiceModal(true)} className="btn btn-primary btn-glow" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}>
+                          + Add New Capability
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid" style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '1.5rem' }}>
+                      {/* Service catalog row listing */}
+                      <div className="glass-panel" style={{ padding: '1.5rem', overflowX: 'auto' }}>
+                        <h4 style={{ fontSize: '1rem', color: 'var(--accent-text)', marginBottom: '1rem' }}>Active Infrastructure Services Catalog</h4>
+                        <table className="db-records-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid var(--border-glass-active)', paddingBottom: '0.5rem' }}>
+                              <th style={{ padding: '0.75rem 0.5rem' }}>Icon</th>
+                              <th style={{ padding: '0.75rem 0.5rem' }}>Capability Title</th>
+                              <th style={{ padding: '0.75rem 0.5rem' }}>Base Pricing model</th>
+                              <th style={{ padding: '0.75rem 0.5rem' }}>Type flag</th>
+                              {!isClient && <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>Actions</th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {services.map(s => (
+                              <tr key={s.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  <div style={{ width: '24px', height: '24px', color: 'var(--accent-text)' }}>
+                                    {Icons[s.iconKey] ? Icons[s.iconKey]('service-icon') : Icons.Infrastructure('service-icon')}
+                                  </div>
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  <div style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{s.title}</div>
+                                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{s.desc || s.description || ''}</div>
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem', fontWeight: '600', color: 'var(--accent-text)' }}>
+                                  {s.pricingModel === 'flat' ? `${formatINR(s.basePrice)} Flat` : `${formatINR(s.basePrice)} / attendee`}
+                                </td>
+                                <td style={{ padding: '0.75rem 0.5rem' }}>
+                                  <span className={`badge ${s.isStandard ? 'standard' : 'dynamic'}`} style={{ fontSize: '0.65rem' }}>
+                                    {s.isStandard ? 'Standard Infra' : 'Dynamic Scale'}
+                                  </span>
+                                </td>
+                                {!isClient && (
+                                  <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
+                                    <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
+                                      <button 
+                                        onClick={() => handleDeleteService(s.id)} 
+                                        className="btn btn-accent" 
+                                        style={{ padding: '0.35rem 0.65rem', fontSize: '0.7rem', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.1)' }}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Right panel: Static DB statistics / schemas or info */}
+                      <div className="glass-panel" style={{ padding: '1.5rem' }}>
+                        <h4 style={{ fontSize: '1.2rem', color: '#ffffff', marginBottom: '1rem' }}>SaaS Multi-Tenant Catalog Manager</h4>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '1.5rem' }}>
+                          This control panel maps directly to your database configurations. Any new capabilities inserted are stored in browser localStorage offline and will be pushed directly to Supabase once connected.
+                        </p>
+                        <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.85rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)', fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                          <span style={{ color: 'var(--accent-text)', fontWeight: 'bold' }}>PostgreSQL DDL SCHEMA:</span>
+                          <pre style={{ margin: '0.5rem 0 0 0', overflowX: 'auto', color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+{`CREATE TABLE services (
+  id VARCHAR(100) PRIMARY KEY,
+  icon VARCHAR(10) NOT NULL,
+  title VARCHAR(100) NOT NULL,
+  cost DECIMAL(10,2) NOT NULL,
+  is_standard BOOLEAN NOT NULL
+);`}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {effectiveActiveTab === 'inquiries' && (
+                  <div className="glass-panel" style={{ padding: '2rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                      <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.3rem', color: 'var(--text-primary)' }}>Bespoke Customer Specifications Inquiries</h3>
                       <div>
                         {/* Status filter dropdown matching Photo 3 */}
                         <select 
@@ -4689,10 +4396,11 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                           }}
                         >
                           <option value="All">All Statuses</option>
-                          <option value="Applied">Applied</option>
-                          <option value="Shortlisted">Shortlisted</option>
-                          <option value="Selected">Selected</option>
-                          <option value="Interview Scheduled">Interview Scheduled</option>
+                          <option value="Received">Received</option>
+                          <option value="Under Review">Under Review</option>
+                          <option value="Contacted">Contacted</option>
+                          <option value="Approved">Approved</option>
+                          <option value="Declined">Declined</option>
                         </select>
                       </div>
                     </div>
@@ -4702,13 +4410,13 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                         <thead>
                           <tr style={{ borderBottom: '1px solid var(--border-glass-active)', paddingBottom: '0.5rem' }}>
                             <th style={{ padding: '0.75rem 0.5rem' }}>#</th>
-                            <th style={{ padding: '0.75rem 0.5rem' }}>Student / Client</th>
-                            <th style={{ padding: '0.75rem 0.5rem' }}>Custom Specs (Job Role)</th>
-                            <th style={{ padding: '0.75rem 0.5rem' }}>Preferred Vendor</th>
-                            <th style={{ padding: '0.75rem 0.5rem' }}>CGPA (Rating)</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Client Representative</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Custom Specifications</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Assigned Vendor</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Estimated Budget</th>
                             <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                            <th style={{ padding: '0.75rem 0.5rem' }}>Applied Date</th>
-                            <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>Actions</th>
+                            <th style={{ padding: '0.75rem 0.5rem' }}>Inquiry Date</th>
+                            <th style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>DBMS Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -4726,49 +4434,69 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                                     {i.specs_notes}
                                   </div>
                                 </td>
-                                <td style={{ padding: '0.75rem 0.5rem', fontWeight: 500 }}>TechCorp / Venue Tents</td>
+                                <td style={{ padding: '0.75rem 0.5rem', fontWeight: 500 }}>
+                                  AuraEvents / {(i.specs_notes || '').toLowerCase().includes('sound') ? 'Stage Speakers' : 'Venue Tents'}
+                                </td>
                                 <td style={{ padding: '0.75rem 0.5rem' }}>
-                                  <span style={{ background: 'rgba(124, 58, 237, 0.08)', border: '1px solid rgba(124, 58, 237, 0.15)', padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.75rem', color: 'var(--accent-text)', fontWeight: 700 }}>
-                                    {(8.0 + (index * 0.45)).toFixed(2)}
+                                  <span style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.15)', padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.75rem', color: 'var(--accent-text)', fontWeight: 700 }}>
+                                    {formatDirectINR(150000 + index * 50000)}
                                   </span>
                                 </td>
                                 <td style={{ padding: '0.75rem 0.5rem' }}>
-                                  {/* Colored Badge mapping the exact visual elements of Photo 3 */}
-                                  <span className={`status-badge-pill ${i.status.replace(/ /g, '-').toLowerCase()}`}>
-                                    {i.status}
+                                  <span className={`status-badge-pill ${(i.status || 'Received').replace(/ /g, '-').toLowerCase()}`}>
+                                    {i.status || 'Received'}
                                   </span>
                                 </td>
                                 <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
                                   {new Date(i.created_at).toLocaleDateString()}
                                 </td>
                                 <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
-                                  {/* Update action triggers dynamic inline status modification */}
-                                  <select 
-                                    value={i.status || 'Applied'} 
-                                    onChange={async (e) => {
-                                      const nextStatus = e.target.value;
-                                      const ok = await supabaseClient.updateInquiryStatus(i.id, nextStatus);
-                                      if (ok.success) {
-                                        setInquiries(prev => prev.map(item => item.id === i.id ? { ...item, status: nextStatus } : item));
-                                        addSqlLog('UPDATE', `UPDATE inquiries SET status = '${nextStatus}' WHERE id = '${i.id}';`, 'success');
-                                      }
-                                    }}
-                                    style={{
-                                      background: 'rgba(255,255,255,0.05)',
-                                      color: 'var(--text-primary)',
-                                      border: '1px solid var(--border-glass)',
-                                      borderRadius: '4px',
-                                      padding: '0.2rem 0.4rem',
-                                      fontSize: '0.7rem',
-                                      fontWeight: 600,
-                                      cursor: 'pointer'
-                                    }}
-                                  >
-                                    <option value="Applied">Applied</option>
-                                    <option value="Shortlisted">Shortlisted</option>
-                                    <option value="Selected">Selected</option>
-                                    <option value="Interview Scheduled">Interview Scheduled</option>
-                                  </select>
+                                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
+                                    <select 
+                                      value={i.status || 'Received'} 
+                                      onChange={async (e) => {
+                                        const nextStatus = e.target.value;
+                                        const ok = await supabaseClient.updateInquiryStatus(i.id, nextStatus);
+                                        if (ok.success) {
+                                          setInquiries(prev => prev.map(item => item.id === i.id ? { ...item, status: nextStatus } : item));
+                                          addSqlLog('UPDATE', `UPDATE inquiries SET status = '${nextStatus}' WHERE id = '${i.id}';`, 'success');
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.05)',
+                                        color: 'var(--text-primary)',
+                                        border: '1px solid var(--border-glass)',
+                                        borderRadius: '4px',
+                                        padding: '0.2rem 0.4rem',
+                                        fontSize: '0.7rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      <option value="Received">Received</option>
+                                      <option value="Under Review">Under Review</option>
+                                      <option value="Contacted">Contacted</option>
+                                      <option value="Approved">Approved</option>
+                                      <option value="Declined">Declined</option>
+                                    </select>
+                                    <button 
+                                      onClick={async () => {
+                                        const ok = window.confirm(`DBMS Inquiry Alert:\nAre you sure you want to delete and dismiss this inquiry from the database?`);
+                                        if (!ok) return;
+                                        const res = await supabaseClient.deleteInquiry(i.id);
+                                        if (res.success) {
+                                          setInquiries(prev => prev.filter(item => item.id !== i.id));
+                                          addSqlLog('DELETE', `DELETE FROM inquiries WHERE id = '${i.id}';`, 'warn');
+                                        } else {
+                                          alert("Failed to delete inquiry.");
+                                        }
+                                      }}
+                                      className="btn btn-accent" 
+                                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.7rem', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.1)' }}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))}
@@ -4778,7 +4506,7 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                   </div>
                 )}
 
-                {adminActiveTab === 'sql-logs' && (
+                {effectiveActiveTab === 'sql-logs' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
                     {/* Authorized Administrators list directory */}
                     <div className="glass-panel" style={{padding: '1.5rem'}}>
@@ -4817,7 +4545,7 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                   </div>
                 )}
 
-                {adminActiveTab === 'mta-handshake' && (
+                {effectiveActiveTab === 'mta-handshake' && (
                   /* SMTP MTA Email Notifications Terminal */
                   <div className="glass-panel" style={{padding: '1.5rem'}}>
                     <h3 style={{fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.1rem', marginBottom: '0.5rem'}}>
@@ -4839,7 +4567,7 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
                   </div>
                 )}
 
-                {adminActiveTab === 'db-config' && (
+                {effectiveActiveTab === 'db-config' && (
                   /* Suppabase credentials connection manager */
                   <div className="glass-panel" style={{ padding: '2rem' }}>
                     <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1.1rem', marginBottom: '0.5rem' }}>⚙️ supbase PostgreSQL DBMS Credentials Config</h3>
@@ -4879,6 +4607,540 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
         </main>
       )}
 
+      {/* CREATE BOOKING RESERVATION OVERLAY WITH MULTI-STEP CHECKOUT AND QR CODE TICKET */}
+      {showBookingModal && (
+        <div className="modal-overlay" onClick={closeBookingModal}>
+          <div 
+            className="modal-content glass-panel" 
+            onClick={(e) => e.stopPropagation()}
+            style={{maxWidth: '35rem'}}
+          >
+            <button className="modal-close-btn" onClick={closeBookingModal}>✕</button>
+            
+            {/* Multi-step indicator bar */}
+            <div className="checkout-steps-bar">
+              <div className={`checkout-step ${bookingStep === 'details' ? 'active' : ''} ${bookingStep !== 'details' ? 'completed' : ''}`}>
+                <span className="checkout-step-number">1</span>
+                <span>Details</span>
+              </div>
+              <div className={`checkout-step ${bookingStep === 'payment' ? 'active' : ''} ${bookingStep === 'success' ? 'completed' : ''}`}>
+                <span className="checkout-step-number">2</span>
+                <span>Payment</span>
+              </div>
+              <div className={`checkout-step ${bookingStep === 'success' ? 'completed active' : ''}`}>
+                <span className="checkout-step-number">3</span>
+                <span>Ticket</span>
+              </div>
+            </div>
+
+            {bookingStep === 'details' && (
+              <div>
+                <div className="modal-header">
+                  <h3>Submit Transaction to Database</h3>
+                  <p>Check out your custom layout specs and let us know who is organizing this event.</p>
+                </div>
+
+                <form onSubmit={(e) => { e.preventDefault(); setBookingStep('payment'); }} id="booking-simulation-form">
+                  <div className="form-group">
+                    <label htmlFor="modal-client-name">Customer Representative Name</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      id="modal-client-name"
+                      placeholder="e.g. Professor Smith"
+                      value={bookingName}
+                      onChange={(e) => setBookingName(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                    <label htmlFor="modal-client-email">E-mail Address</label>
+                    <input
+                      type="email"
+                      className="form-input"
+                      id="modal-client-email"
+                      placeholder="evaluator@university.edu"
+                      value={bookingEmail}
+                      onChange={(e) => setBookingEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  {/* 10-Digit Phone, City, State, Pincode for Relational Participants Schema */}
+                  <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                    <label htmlFor="modal-client-phone">Phone Number (10 Digits)</label>
+                    <input
+                      type="tel"
+                      className="form-input"
+                      id="modal-client-phone"
+                      placeholder="e.g. 6363579209"
+                      value={bookingPhone}
+                      pattern="[0-9]{10}"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!isNaN(val)) setBookingPhone(val);
+                      }}
+                      maxLength="10"
+                      required
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginTop: '0.75rem' }}>
+                    <div className="form-group">
+                      <label htmlFor="modal-client-city">City</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        id="modal-client-city"
+                        placeholder="Bangalore"
+                        value={bookingCity}
+                        onChange={(e) => setBookingCity(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="modal-client-state">State</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        id="modal-client-state"
+                        placeholder="Karnataka"
+                        value={bookingState}
+                        onChange={(e) => setBookingState(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="modal-client-pincode">Pincode</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        id="modal-client-pincode"
+                        placeholder="560001"
+                        value={bookingPincode}
+                        pattern="[0-9]{6}"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!isNaN(val)) setBookingPincode(val);
+                        }}
+                        maxLength="6"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group" style={{ marginTop: '0.75rem' }}>
+                    <label htmlFor="modal-event-date">Desired Event Target Date</label>
+                    <input
+                      type="date"
+                      className="form-input"
+                      id="modal-event-date"
+                      value={bookingDate}
+                      min={minDate} // Dynamic timezone safe frontend validation constraint
+                      onChange={(e) => setBookingDate(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  {/* Summary Checklist Brief in modal */}
+                  <div style={{background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1rem', margin: '1.25rem 0', fontSize: '0.8rem'}}>
+                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem'}}>
+                      <span style={{color: 'var(--text-secondary)'}}>PostgreSQL Event Type:</span>
+                      <span style={{fontWeight: 600}}>{EVENTS_DATA[selectedEventType]?.title}</span>
+                    </div>
+                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem'}}>
+                      <span style={{color: 'var(--text-secondary)'}}>Committed Modules:</span>
+                      <span style={{fontWeight: 600}}>{selectedServices.length} Selected</span>
+                    </div>
+                    <div style={{display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.4rem', marginTop: '0.4rem'}}>
+                      <span style={{color: '#ffffff', fontWeight: 700}}>Calculated Pricing:</span>
+                      <span style={{color: 'var(--accent-text)', fontWeight: 800}}>{formatINR(totalCostDetails.total)}</span>
+                    </div>
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary btn-glow" 
+                    style={{width: '100%', justifyContent: 'center'}}
+                  >
+                    Proceed to Payment Checkout
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {bookingStep === 'payment' && (
+              <div>
+                <div className="modal-header">
+                  <h3>Simulated Payment Checkout Gateway</h3>
+                  <p>Choose your gateway and complete the checkout to commit the reservation to Supabase.</p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
+                  <button 
+                    onClick={() => setPaymentMode('card')} 
+                    className={`btn ${paymentMode === 'card' ? 'btn-primary' : 'btn-secondary'}`} 
+                    style={{ flexGrow: 1, justifyContent: 'center', padding: '0.5rem' }}
+                  >
+                    💳 Card Gateway (Stripe)
+                  </button>
+                  <button 
+                    onClick={() => setPaymentMode('upi')} 
+                    className={`btn ${paymentMode === 'upi' ? 'btn-primary' : 'btn-secondary'}`} 
+                    style={{ flexGrow: 1, justifyContent: 'center', padding: '0.5rem' }}
+                  >
+                    📱 UPI Scan (Razorpay)
+                  </button>
+                </div>
+
+                {paymentMode === 'card' ? (
+                  <form onSubmit={handleBookingSubmit}>
+                    <div className="credit-card-mock">
+                      <div className="credit-card-chip"></div>
+                      <div className="credit-card-number">{cardNum ? cardNum.replace(/(\d{4})/g, '$1 ') : '•••• •••• •••• ••••'}</div>
+                      <div className="credit-card-row">
+                        <div>
+                          <span>Card Holder</span>
+                          <div style={{ fontWeight: 600 }}>{cardName || 'YOUR NAME'}</div>
+                        </div>
+                        <div>
+                          <span>Expiry</span>
+                          <div style={{ fontWeight: 600 }}>{cardExp || 'MM/YY'}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label>16-Digit Card Number</label>
+                      <input 
+                        type="text" 
+                        className="form-input" 
+                        maxLength="16"
+                        placeholder="4111 2222 3333 4444" 
+                        value={cardNum}
+                        onChange={(e) => setCardNum(e.target.value.replace(/\D/g, ''))}
+                        required 
+                      />
+                    </div>
+                    <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
+                      <div className="form-group">
+                        <label>Expiration Date</label>
+                        <input 
+                          type="text" 
+                          className="form-input" 
+                          placeholder="MM/YY" 
+                          maxLength="5"
+                          value={cardExp}
+                          onChange={(e) => setCardExp(e.target.value)}
+                          required 
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Security CVV</label>
+                        <input 
+                          type="password" 
+                          className="form-input" 
+                          placeholder="•••" 
+                          maxLength="3"
+                          value={cardCvv}
+                          onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
+                          required 
+                        />
+                      </div>
+                    </div>
+                    <div className="form-group" style={{ marginTop: '0.75rem', marginBottom: '1.25rem' }}>
+                      <label>Cardholder Full Name</label>
+                      <input 
+                        type="text" 
+                        className="form-input" 
+                        placeholder="Holder Name" 
+                        value={cardName}
+                        onChange={(e) => setCardName(e.target.value)}
+                        required 
+                      />
+                    </div>
+                    
+                    <button 
+                      type="submit" 
+                      className="btn btn-primary btn-glow" 
+                      style={{ width: '100%', justifyContent: 'center' }}
+                      disabled={paymentLoading}
+                    >
+                      {paymentLoading ? 'Authorizing Gateway Transaction...' : `Confirm & Pay ${formatINR(totalCostDetails.total)}`}
+                    </button>
+                  </form>
+                ) : (
+                  <div style={{ textAlign: 'center' }}>
+                    <div className="upi-qr-mock">
+                      <svg width="140" height="140" viewBox="0 0 100 100">
+                        {/* Custom vector QR code scan path */}
+                        <rect width="100" height="100" fill="#ffffff" />
+                        <rect x="8" y="8" width="24" height="24" fill="#020617" />
+                        <rect x="12" y="12" width="16" height="16" fill="#ffffff" />
+                        <rect x="68" y="8" width="24" height="24" fill="#020617" />
+                        <rect x="72" y="12" width="16" height="16" fill="#ffffff" />
+                        <rect x="8" y="68" width="24" height="24" fill="#020617" />
+                        <rect x="12" y="72" width="16" height="16" fill="#ffffff" />
+                        <rect x="36" y="36" width="28" height="28" fill="#020617" />
+                        <rect x="40" y="40" width="20" height="20" fill="#ffffff" />
+                        <rect x="15" y="40" width="10" height="10" fill="#020617" />
+                        <rect x="40" y="15" width="15" height="10" fill="#020617" />
+                        <rect x="75" y="45" width="10" height="15" fill="#020617" />
+                        <rect x="45" y="75" width="15" height="10" fill="#020617" />
+                      </svg>
+                      <div className="upi-apps">
+                        <span className="upi-app-pill">GPay</span>
+                        <span className="upi-app-pill">PhonePe</span>
+                        <span className="upi-app-pill">Paytm</span>
+                        <span className="upi-app-pill">UPI ID</span>
+                      </div>
+                    </div>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Scan this Razorpay dynamic checkout code using any UPI App to lock the pricing reservation instantly.</p>
+                    <button 
+                      onClick={handleBookingSubmit} 
+                      className="btn btn-primary btn-glow" 
+                      style={{ width: '100%', justifyContent: 'center' }}
+                      disabled={paymentLoading}
+                    >
+                      {paymentLoading ? 'Confirming UPI Payment...' : `Confirm Scan & Authorize ${formatINR(totalCostDetails.total)}`}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {bookingStep === 'success' && (
+              <div className="success-state">
+                <div className="success-icon-box" style={{marginBottom: '1rem', background: '#10b981', color: '#ffffff'}}>✔</div>
+                <h3 className="success-title">Event Plan Saved & Booked!</h3>
+                <p className="success-desc" style={{marginBottom: '1.5rem'}}>
+                  Your payment was authorized successfully. Your customized specifications are committed as a new row in the Supabase PostgreSQL 'bookings' table.
+                </p>
+                
+                {/* Visual Event Ticket Stub with QR Code */}
+                {recentBookingResult && (
+                  <div className="ticket-stub">
+                    <div className="ticket-header">
+                      <span style={{fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '1rem', color: '#ffffff'}}>
+                        🎫 AURA ENTRY TICKET
+                      </span>
+                      <span className="ticket-badge" style={{ background: '#10b981', color: '#ffffff' }}>CONFIRMED</span>
+                    </div>
+
+                    <div className="ticket-grid">
+                      <div style={{ textAlign: 'left' }}>
+                        <div className="ticket-meta-label">System Transaction UUID (Primary key)</div>
+                        <div className="ticket-meta-val" style={{fontSize: '0.65rem', fontFamily: 'monospace', color: 'var(--accent-text)'}}>{recentBookingResult.id}</div>
+
+                        <div className="ticket-meta-label">Representative Customer</div>
+                        <div className="ticket-meta-val">{recentBookingResult.client_name}</div>
+
+                        <div className="ticket-meta-label">Event Target Date & Model</div>
+                        <div className="ticket-meta-val" style={{fontSize: '0.85rem'}}>
+                          {recentBookingResult.event_date} | {recentBookingResult.event_type.toUpperCase()}
+                        </div>
+
+                        <div className="ticket-meta-label">Total Cost Locked (₹)</div>
+                        <div className="ticket-meta-val" style={{color: 'var(--accent-primary)', fontSize: '1rem', margin: 0, fontWeight: 800}}>
+                          {formatDirectINR(recentBookingResult.total_price)}
+                        </div>
+                      </div>
+
+                      {/* Mock QR Code generator block */}
+                      <div style={{display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center'}}>
+                        <div className="ticket-qr-box" style={{ background: '#ffffff', padding: '0.5rem', borderRadius: '4px' }}>
+                          <svg className="ticket-qr-svg" viewBox="0 0 100 100" style={{ width: '80px', height: '80px' }}>
+                            {/* QR Outer border */}
+                            <rect width="100" height="100" fill="#ffffff" />
+                            {/* QR Patterns */}
+                            <rect x="10" y="10" width="20" height="20" fill="#030712" />
+                            <rect x="15" y="15" width="10" height="10" fill="#ffffff" />
+                            
+                            <rect x="70" y="10" width="20" height="20" fill="#030712" />
+                            <rect x="75" y="15" width="10" height="10" fill="#ffffff" />
+                            
+                            <rect x="10" y="70" width="20" height="20" fill="#030712" />
+                            <rect x="15" y="75" width="10" height="10" fill="#ffffff" />
+                            
+                            <rect x="40" y="40" width="20" height="20" fill="#030712" />
+                            <rect x="45" y="45" width="10" height="10" fill="#ffffff" />
+                            
+                            {/* Small specs blocks */}
+                            <rect x="35" y="10" width="10" height="5" fill="#030712" />
+                            <rect x="55" y="15" width="5" height="15" fill="#030712" />
+                            <rect x="10" y="45" width="15" height="5" fill="#030712" />
+                            <rect x="45" y="70" width="10" height="10" fill="#030712" />
+                            <rect x="70" y="45" width="15" height="15" fill="#030712" />
+                            <rect x="80" y="75" width="10" height="5" fill="#030712" />
+                          </svg>
+                        </div>
+                        <span style={{fontSize: '0.65rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '0.5rem', display: 'block'}}>
+                          Scan for Entrance logs
+                        </span>
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                <button 
+                  onClick={closeBookingModal} 
+                  className="btn btn-primary"
+                  style={{width: '100%', justifyContent: 'center'}}
+                >
+                  Return to Dashboard
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* UPDATE (U) BOOKING RESERVATION OVERLAY */}
+      {showEditModal && (
+        <div className="edit-modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div 
+            className="edit-modal-content glass-panel" 
+            onClick={(e) => e.stopPropagation()}
+            style={{borderColor: '#3b82f6'}}
+          >
+            <button className="modal-close-btn" onClick={() => setShowEditModal(false)}>✕</button>
+            <div className="modal-header">
+              <h3 style={{color: '#3b82f6'}}>Update Database Transaction</h3>
+              <p>Perform an <code>UPDATE</code> transaction on bookings row primary key: <span style={{fontFamily: 'monospace', fontSize: '0.7rem', color: 'var(--accent-text)'}}>{editId}</span></p>
+            </div>
+
+            <form onSubmit={handleEditSubmit} id="edit-booking-form">
+              <div className="grid" style={{gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem'}}>
+                <div className="form-group" style={{margin: 0}}>
+                  <label htmlFor="edit-client-name">Rep Name</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    id="edit-client-name"
+                    value={editClientName}
+                    onChange={(e) => setEditClientName(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="form-group" style={{margin: 0}}>
+                  <label htmlFor="edit-client-email">Email</label>
+                  <input
+                    type="email"
+                    className="form-input"
+                    id="edit-client-email"
+                    value={editClientEmail}
+                    onChange={(e) => setEditClientEmail(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid" style={{gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem'}}>
+                <div className="form-group" style={{margin: 0}}>
+                  <label htmlFor="edit-event-date">Target Date</label>
+                  <input
+                    type="date"
+                    className="form-input"
+                    id="edit-event-date"
+                    value={editEventDate}
+                    onChange={(e) => setEditEventDate(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="form-group" style={{margin: 0}}>
+                  <label htmlFor="edit-event-type">Event Category</label>
+                  <select 
+                    className="form-input"
+                    id="edit-event-type"
+                    value={editEventType}
+                    onChange={(e) => setEditEventType(e.target.value)}
+                    style={{background: 'var(--bg-card)'}}
+                  >
+                    {Object.entries(EVENTS_DATA).map(([key, val]) => (
+                      <option key={key} value={key} style={{background: 'var(--bg-deep)'}}>
+                        {val.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="edit-guest-slider">
+                  Attendance Limit
+                  <span className="val" style={{color: '#3b82f6', float: 'right'}}>{editGuestCount} Guests</span>
+                </label>
+                <div className="range-slider-container">
+                  <input
+                    type="range"
+                    id="edit-guest-slider"
+                    className="range-slider"
+                    min="50"
+                    max="3000"
+                    step="50"
+                    value={editGuestCount}
+                    onChange={(e) => setEditGuestCount(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+
+              {/* Service list checks for editing modal */}
+              <div className="form-group">
+                <label>Update Configured Modules</label>
+                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.4rem', maxHeight: '140px', overflowY: 'auto', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.5rem'}}>
+                  {services.map((service) => {
+                    const isChecked = editSelectedServices.includes(service.id);
+                    return (
+                      <label 
+                        key={service.id} 
+                        style={{
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '0.4rem', 
+                          fontSize: '0.75rem', 
+                          color: isChecked ? '#ffffff' : 'var(--text-secondary)',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleToggleEditService(service.id)}
+                          style={{accentColor: '#3b82f6', width: '0.85rem', height: '0.85rem'}}
+                        />
+                        <span style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}} title={service.title}>
+                          {service.title}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem'}}>
+                <div>
+                  <span style={{fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block'}}>NEW ESTIMATED PRICE</span>
+                  <span style={{fontSize: '1.35rem', fontWeight: '800', color: '#ffffff'}}>{formatINR(computedEditTotal)}</span>
+                </div>
+                <span className="footer-college-tag" style={{borderColor: 'rgba(59, 130, 246, 0.3)', color: '#3b82f6', background: 'rgba(59, 130, 246, 0.05)'}}>
+                  Recalculated
+                </span>
+              </div>
+
+              <button 
+                type="submit" 
+                className="btn btn-primary" 
+                style={{width: '100%', justifyContent: 'center', background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', boxShadow: '0 0 20px rgba(59, 130, 246, 0.2)', color: '#ffffff'}}
+              >
+                Execute UPDATE Transaction
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* SIMULATED USER SIGN IN PORTAL OVERLAY */}
       {showAuthModal && (
         <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
@@ -4905,89 +5167,56 @@ JOIN Participant PT ON B.ParticipantID = PT.ParticipantID;`}
             </div>
 
             <form onSubmit={handleAuthSubmit} id="user-authentication-form">
-              {authMode === 'otp' ? (
-                <div style={{textAlign: 'center'}}>
-                  <span style={{fontSize: '2.5rem', display: 'block', marginBottom: '1rem'}}>🔑</span>
-                  <h3>Verify OTP Code</h3>
-                  <p style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem'}}>
-                    We've simulated sending a 4-digit security code to your email: <strong>{authEmail || 'evaluator@university.edu'}</strong>.
-                  </p>
-                  
-                  <div className="otp-box-grid">
-                    {[0, 1, 2, 3].map(i => (
-                      <input
-                        key={i}
-                        type="text"
-                        className="otp-input"
-                        id={`otp-char-${i}`}
-                        value={authOtp[i]}
-                        onChange={(e) => handleOtpChange(i, e.target.value)}
-                        maxLength="1"
-                        required
-                      />
-                    ))}
-                  </div>
-
-                  <button 
-                    type="submit" 
-                    className="btn btn-primary" 
-                    style={{width: '100%', justifyContent: 'center', marginTop: '1rem'}}
-                  >
-                    Confirm & Unlock Admin Dashboard
-                  </button>
-                </div>
-              ) : (
-                <div>
-                  {authMode === 'register' && (
-                    <div className="form-group">
-                      <label htmlFor="auth-name-input">Full Name</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        id="auth-name-input"
-                        placeholder="e.g. Professor Smith"
-                        value={authName}
-                        onChange={(e) => setAuthName(e.target.value)}
-                        required
-                      />
-                    </div>
-                  )}
-
-                  <div className="form-group" style={{marginTop: '1rem'}}>
-                    <label htmlFor="auth-email-input">E-mail Address</label>
+              <div>
+                {authMode === 'register' && (
+                  <div className="form-group">
+                    <label htmlFor="auth-name-input">Full Name</label>
                     <input
-                      type="email"
+                      type="text"
                       className="form-input"
-                      id="auth-email-input"
-                      placeholder="yourname@domain.com"
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
+                      id="auth-name-input"
+                      placeholder="e.g. Professor Smith"
+                      value={authName}
+                      onChange={(e) => setAuthName(e.target.value)}
                       required
                     />
                   </div>
+                )}
 
-                  <div className="form-group" style={{marginTop: '1rem'}}>
-                    <label htmlFor="auth-password-input">Password</label>
-                    <input
-                      type="password"
-                      className="form-input"
-                      id="auth-password-input"
-                      placeholder="••••••••"
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <button 
-                    type="submit" 
-                    className="btn btn-primary btn-glow" 
-                    style={{width: '100%', justifyContent: 'center', marginTop: '2rem'}}
-                  >
-                    {authMode === 'login' ? 'Proceed to Sign In' : 'Proceed to Sign Up'}
-                  </button>
+                <div className="form-group" style={{marginTop: '1rem'}}>
+                  <label htmlFor="auth-email-input">E-mail Address</label>
+                  <input
+                    type="email"
+                    className="form-input"
+                    id="auth-email-input"
+                    placeholder="yourname@domain.com"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    required
+                  />
                 </div>
-              )}
+
+                <div className="form-group" style={{marginTop: '1rem'}}>
+                  <label htmlFor="auth-password-input">Password</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    id="auth-password-input"
+                    placeholder="••••••••"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <button 
+                  type="submit" 
+                  className="btn btn-primary btn-glow" 
+                  style={{width: '100%', justifyContent: 'center', marginTop: '2rem'}}
+                >
+                  {authMode === 'login' ? 'Proceed to Sign In' : 'Proceed to Sign Up'}
+                </button>
+              </div>
             </form>
           </div>
         </div>

@@ -329,6 +329,9 @@ function App() {
     const saved = localStorage.getItem('auraevents_admin_session') || sessionStorage.getItem('auraevents_admin_session');
     return saved ? JSON.parse(saved) : null;
   });
+  const isClient = adminSession?.role === 'Premium Client';
+  const isVendor = adminSession?.role === 'Event Vendor';
+  const isAdmin = !adminSession?.role || adminSession?.role === 'Super Admin' || adminSession?.role === 'Guest Admin';
   const [isAdminPageActive, setIsAdminPageActive] = useState(false);
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPhone, setAdminPhone] = useState('');

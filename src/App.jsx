@@ -627,50 +627,8 @@ function App() {
 
   // Automatic Inactivity Session Timeout Guard
   useEffect(() => {
-    if (!adminSession) {
-      setShowInactivityCountdown(false);
-      return;
-    }
-
-    const INACTIVITY_TIMEOUT_MS = 180000; // 3 minutes total
-    const WARNING_THRESHOLD_MS = 150000;  // Warn at 2.5 minutes (30s remaining)
-    let lastActive = Date.now();
-
-    const resetActive = () => {
-      lastActive = Date.now();
-      setShowInactivityCountdown(false);
-    };
-
-    // User action listeners
-    const events = ['mousemove', 'keydown', 'click', 'scroll', 'mousedown', 'touchstart'];
-    const handleAction = () => {
-      resetActive();
-    };
-
-    events.forEach(name => window.addEventListener(name, handleAction));
-
-    // Polling interval to check idle state
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - lastActive;
-      
-      if (elapsed >= INACTIVITY_TIMEOUT_MS) {
-        // Log out immediately
-        handleAdminLogout('Session expired due to inactivity.');
-        resetActive();
-      } else if (elapsed >= WARNING_THRESHOLD_MS) {
-        // Show warning countdown
-        setShowInactivityCountdown(true);
-        const remaining = Math.ceil((INACTIVITY_TIMEOUT_MS - elapsed) / 1000);
-        setInactivityCountdown(remaining > 0 ? remaining : 0);
-      } else {
-        setShowInactivityCountdown(false);
-      }
-    }, 1000);
-
-    return () => {
-      events.forEach(name => window.removeEventListener(name, handleAction));
-      clearInterval(interval);
-    };
+    // Disabled to prevent unwanted session logouts and black login screens during college presentations
+    setShowInactivityCountdown(false);
   }, [adminSession]);
 
   // Client-side authentication route guard middleware

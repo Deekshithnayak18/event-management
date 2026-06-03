@@ -1414,7 +1414,7 @@ function App() {
               <div className="stat-label">Satisfaction Rate</div>
             </div>
             <div className="stat-item">
-              <div className="stat-value" style={{fontSize: '1.8rem', lineHeight: '2.5rem'}}>{formatDirectINR(dbMetrics.totalRevenue || 150000)}+</div>
+              <div className="stat-value" style={{fontSize: '1.8rem', lineHeight: '2.5rem'}}>{formatDirectINR(typeof dbMetrics?.totalRevenue === 'number' && !isNaN(dbMetrics.totalRevenue) && dbMetrics.totalRevenue > 0 ? dbMetrics.totalRevenue : 150000)}+</div>
               <div className="stat-label">Rupee Localization</div>
             </div>
           </div>

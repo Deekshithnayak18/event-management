@@ -182,6 +182,12 @@ INSERT INTO Payment (BookingID, Amount, PaymentStatus) VALUES
 (4, 1200.00, 'Paid'),
 (5, 1500.00, 'Paid');
 
+-- Seed Inquiries
+INSERT INTO inquiries (rep_name, email, specs_notes, status) VALUES 
+('Event Chair Mark', 'mark.chair@fests.org', 'Requesting custom quote for stadium sports concert setup. Need sound arrays and RFID entry portals.', 'Received'),
+('Sneha Patel', 'sneha@student.edu', 'Requesting sound barrier length details and 500W speaker layouts for the outdoor lawn party.', 'Approved'),
+('Aditya Rao', 'aditya@corporate.com', 'Corporate summit staging request. Needs standard catering for 250 guests and modern audio setup.', 'Under Review');
+
 -- Verify Payment insertions
 -- SELECT * FROM Payment;
 
